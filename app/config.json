@@ -1,5 +1,5 @@
 {
-  "serviceName": "CDP Node.js Prototype Template",
+  "serviceName": "aqie-demo-data-visualisations",
   "plugins": {
     "govuk-frontend": {
       "rebrand": true
