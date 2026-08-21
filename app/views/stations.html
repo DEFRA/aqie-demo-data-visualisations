@@ -1,0 +1,47 @@
+{% extends "layouts/main.html" %}
+{% from "govuk/components/back-link/macro.njk" import govukBackLink %}
+
+{% set pageName = "Search results" %}
+
+{% block beforeContent %}
+  {{ govukBackLink({ text: "Back", href: "/" }) }}
+  {{ super() }}
+{% endblock %}
+
+{% block content %}
+
+<div class="govuk-grid-row">
+  <div class="govuk-grid-column-two-thirds">
+
+    {% if search.mode == "location" %}
+      <h1 class="govuk-heading-l">Monitoring stations near {{ search.label }}</h1>
+    {% else %}
+      <h1 class="govuk-heading-l">Monitoring stations matching &ldquo;{{ search.label }}&rdquo;</h1>
+    {% endif %}
+
+    {% if search.results.length %}
+      <ul class="govuk-list">
+        {% for result in search.results %}
+          <li class="govuk-!-margin-bottom-4">
+            <a class="govuk-link govuk-!-font-weight-bold"
+               href="/station/{{ result.station.localSiteID }}">
+              {{ result.station.name }}
+            </a>
+            <span class="govuk-body-s govuk-!-display-block govuk-!-margin-top-1">
+              {{ result.station.area }}{% if result.distanceKm != null %} &mdash; {{ result.distanceKm | round(1) }} km away{% endif %}
+            </span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="govuk-body">
+        No monitoring stations found. Try a different town, postcode or station name.
+      </p>
+    {% endif %}
+
+    <p class="govuk-body"><a class="govuk-link" href="/">Search again</a></p>
+
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "layouts/main.html" %}
+
+{% set pageName = "Station not found" %}
+
+{% block content %}
+<div class="govuk-grid-row">
+  <div class="govuk-grid-column-two-thirds">
+    <h1 class="govuk-heading-l">Monitoring station not found</h1>
+    <p class="govuk-body">
+      We could not find a monitoring station with the reference
+      &ldquo;{{ siteId }}&rdquo;.
+    </p>
+    <p class="govuk-body"><a class="govuk-link" href="/">Search again</a></p>
+  </div>
+</div>
+{% endblock %}

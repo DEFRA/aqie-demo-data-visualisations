@@ -4,3 +4,25 @@ https://prototype-kit.service.gov.uk/docs/how-to-use-layouts
 #}
 
 {% extends "govuk-prototype-kit/layouts/govuk-branded.njk" %}
+{% from "govuk/components/phase-banner/macro.njk" import govukPhaseBanner %}
+{% from "govuk/components/service-navigation/macro.njk" import govukServiceNavigation %}
+
+{% set activeNav = activeNav | default("search") %}
+
+{% block header %}
+  {{ super() }}
+  {{ govukServiceNavigation({
+    navigation: [
+      { href: "/", text: "Search by location", active: activeNav == "search" },
+      { href: "/search-on-a-map", text: "Search on a map", active: activeNav == "map" },
+      { href: "/create-and-download-datasets", text: "Create and download datasets", active: activeNav == "datasets" }
+    ]
+  }) }}
+{% endblock %}
+
+{% block beforeContent %}
+  {{ govukPhaseBanner({
+    tag: { text: "Beta" },
+    html: 'This is a prototype using live monitoring data. It is not an official government service.'
+  }) }}
+{% endblock %}
