@@ -260,7 +260,8 @@ The second acceptance criterion. Short answer: **feasible, with low–moderate b
 1. Start `aqie-back-end` on `:3001` (it provides `/measurements`), following that repo's own README.
    It is the **standard, unmodified** service — no local changes to it are needed. Allow ~90 seconds
    for its startup populate before the API binds, then confirm with
-   `curl http://localhost:3001/measurements`.2. In this repo: `npm install`, then `npm run dev` and open `http://localhost:3000`.
+   `curl http://localhost:3001/measurements`.
+2. In this repo: `npm install`, then `npm run dev` and open `http://localhost:3000`.
 3. Configuration: [.env](.env) sets `AQIE_BACKEND_URL=http://localhost:3001` (defaults to that if unset).
    `SOS_URL` can override the SOS feed base if needed.
 
