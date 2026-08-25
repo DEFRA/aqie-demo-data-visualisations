@@ -163,7 +163,7 @@ contract, verified SOS feed facts, and a step-by-step migration checklist are in
 | **Stations sourced from `/measurements`, not `/monitoringStations`** | The two collections share **no ids** (`MY1` vs `UKA00315`); only `/measurements` carries the FOIs the series lookup needs |
 | **Canonical pollutant aliasing** (`GE10`→PM10, `GR25`→PM2.5)         | The back-end stores raw parameter ids; the UI needs canonical pollutants                                                  |
 | **D3 v7 (SVG) charts**                                               | Accessibility (focusable, labelable) and MIT licence vs canvas/commercial libs                                            |
-| **Small multiples default + combined variant**                       | Avoids conflating pollutants with different scales; combined is compact for spotting episodes                             |
+| **Combined default + small multiples variant**                       | Combined is compact for spotting episodes at a glance; small multiples avoid conflating pollutants with different scales  |
 | **Server-side rendering + progressive enhancement**                  | Core info (tables) works with no JavaScript; charts enhance on top                                                        |
 | **Explicit legal limits (NO₂ 200, SO₂ 350 µg/m³ only)**              | "Hourly exceedances" only applies where an hourly legal limit exists; DAQI bands are a health index, not a legal limit    |
 | **Non-colour-only encoding** (colour + line style + legend)          | Web Content Accessibility Guidelines (WCAG) — do not rely on colour alone                                                 |

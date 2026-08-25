@@ -114,7 +114,10 @@
           {% set _ = seriesRows.push([{ text: point.time }, { text: point.value }]) %}
         {% endfor %}
         {% set seriesTable %}{{ govukTable({
-          head: [{ text: "Time (UTC)" }, { text: "Reading (" + p.unit + ")" }],
+          head: [
+            { text: "Date (Europe/London)" if resolution == "daily" else "Time (UTC)" },
+            { text: "Reading (" + p.unit + ")" }
+          ],
           rows: seriesRows
         }) }}{% endset %}
         {{ govukDetails({ summaryText: "View " + p.name + " data as a table", html: seriesTable }) }}
