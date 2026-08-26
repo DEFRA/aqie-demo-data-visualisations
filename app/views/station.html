@@ -1,0 +1,139 @@
+{% extends "layouts/main.html" %}
+{% from "govuk/components/back-link/macro.njk" import govukBackLink %}
+{% from "govuk/components/notification-banner/macro.njk" import govukNotificationBanner %}
+{% from "govuk/components/details/macro.njk" import govukDetails %}
+{% from "govuk/components/table/macro.njk" import govukTable %}
+
+{% set pageName = station.name %}
+
+{% set periods = [
+  { key: "24h", label: "Last 24 hours" },
+  { key: "7d", label: "Last 7 days" },
+  { key: "month", label: "Last month" },
+  { key: "year", label: "Last year" }
+] %}
+
+{% block beforeContent %}
+  {{ govukBackLink({ text: "Back to search", href: "/" }) }}
+  {{ super() }}
+{% endblock %}
+
+{% block content %}
+<div class="govuk-grid-row">
+  <div class="govuk-grid-column-full">
+
+    <span class="govuk-caption-l">{{ station.area }}</span>
+    <h1 class="govuk-heading-xl govuk-!-margin-bottom-4">{{ station.name }}</h1>
+
+    <nav class="app-timeframe" aria-label="Choose a timeframe">
+      <ul class="app-timeframe__list">
+        {% for p in periods %}
+          <li class="app-timeframe__item">
+            {% if p.key == period %}
+              <strong class="app-timeframe__current" aria-current="true">{{ p.label }}</strong>
+            {% else %}
+              <a class="govuk-link" href="?period={{ p.key }}&amp;layout={{ layout }}">{{ p.label }}</a>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </nav>
+
+    {{ govukNotificationBanner({
+      titleText: "Important",
+      text: "Data has not been checked and verified."
+    }) }}
+
+    {% if pollutants.length %}
+
+      {% set summaryRows = [] %}
+      {% for p in pollutants %}
+        {% set nameCell %}<span class="govuk-!-font-weight-bold">{{ p.name }}</span><span class="govuk-body-s govuk-!-display-block">Data capture: {{ p.dataCapturePct }}%</span>{% endset %}
+        {% set averageCell %}{% if p.average24h != null %}{{ p.average24h }} {{ p.unit }}{% else %}No data{% endif %}{% endset %}
+        {% set exceedanceCell %}{% if p.limit == null %}No legal limit{% else %}{{ p.exceedances }}{% endif %}{% endset %}
+        {% set _ = summaryRows.push([{ html: nameCell }, { text: averageCell }, { html: exceedanceCell }]) %}
+      {% endfor %}
+
+      {{ govukTable({
+        caption: "Pollutant summary for the last 24 hours",
+        captionClasses: "govuk-table__caption--m",
+        head: [
+          { text: "Pollutant" },
+          { text: "24 hour average" },
+          { text: "Hourly exceedances" }
+        ],
+        rows: summaryRows
+      }) }}
+
+      {% set aboutHtml %}
+        <p class="govuk-body">Figures are derived from the hourly readings shown below.</p>
+        <ul class="govuk-list govuk-list--bullet">
+          <li><strong>24 hour average</strong> &mdash; the mean of the valid hourly readings in the last 24 hours.</li>
+          <li><strong>Data capture</strong> &mdash; the percentage of the 24 expected hourly readings that were valid.</li>
+          <li><strong>Hourly exceedances</strong> &mdash; how many hours exceeded the legal hourly limit, where one exists (nitrogen dioxide 200 µg/m³, sulphur dioxide 350 µg/m³).</li>
+        </ul>
+      {% endset %}
+      {{ govukDetails({ summaryText: "About these figures", html: aboutHtml }) }}
+
+      <h2 class="govuk-heading-l govuk-!-margin-top-6">Hourly readings</h2>
+
+      <div class="app-chart-switcher">
+        <span class="app-chart-switcher__label">Chart view:</span>
+        {% if layout == "combined" %}
+          <a class="govuk-link" href="?period={{ period }}&amp;layout=small-multiples">Individual</a>
+          <strong class="app-chart-switcher__current" aria-current="true">Combined</strong>
+        {% else %}
+          <strong class="app-chart-switcher__current" aria-current="true">Individual</strong>
+          <a class="govuk-link" href="?period={{ period }}&amp;layout=combined">Combined</a>
+        {% endif %}
+      </div>
+
+      {% if layout == "combined" %}
+        <div class="app-charts app-charts--combined" data-layout="combined">
+          <div class="js-chart-legend app-chart-legend"></div>
+          <div class="js-chart-combined app-chart__canvas"></div>
+        </div>
+      {% else %}
+        <div class="app-charts app-charts--small-multiples" data-layout="small-multiples">
+          {% for p in pollutants %}
+            <figure class="app-chart" data-code="{{ p.code }}">
+              <figcaption class="app-chart__caption">
+                <h3 class="govuk-heading-s govuk-!-margin-bottom-1">{{ p.name }}</h3>
+                <span class="govuk-body-s">Measured in {{ p.unit }} (micrograms per cubic metre)</span>
+              </figcaption>
+              <div class="app-chart__canvas js-chart" data-code="{{ p.code }}"></div>
+            </figure>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <h3 class="govuk-heading-m govuk-!-margin-top-6">View the data</h3>
+      {% for p in pollutants %}
+        {% set seriesRows = [] %}
+        {% for point in p.series %}
+          {% set _ = seriesRows.push([{ text: point.time }, { text: point.value }]) %}
+        {% endfor %}
+        {% set seriesTable %}{{ govukTable({
+          head: [
+            { text: "Date (Europe/London)" if resolution == "daily" else "Time (UTC)" },
+            { text: "Reading (" + p.unit + ")" }
+          ],
+          rows: seriesRows
+        }) }}{% endset %}
+        {{ govukDetails({ summaryText: "View " + p.name + " data as a table", html: seriesTable }) }}
+      {% endfor %}
+
+    {% else %}
+      <p class="govuk-body">No pollutant readings are available for this station in the selected timeframe.</p>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}
+
+{% block bodyEnd %}
+  {{ super() }}
+  <script id="chart-data" type="application/json">{{ chartData | safe }}</script>
+  <script src="/public/javascripts/vendor/d3.min.js"></script>
+  <script src="/public/javascripts/charts.js"></script>
+{% endblock %}

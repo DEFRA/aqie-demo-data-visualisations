@@ -1,5 +1,5 @@
 {
-  "serviceName": "aqie-demo-data-visualisations",
+  "serviceName": "Get air pollution data",
   "plugins": {
     "govuk-frontend": {
       "rebrand": true

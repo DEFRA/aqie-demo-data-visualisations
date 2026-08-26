@@ -5,6 +5,22 @@ the [GOV.UK Frontend](https://github.com/alphagov/govuk-frontend).
 
 > Basically the `GOV.UK Prototype Kit` and `GOV.UK Frontend` wrapped up and provided on the Core Delivery Platform
 
+---
+
+## Contents
+
+- [About this prototype](#about-this-prototype)
+  - [Architecture & data flow](#architecture--data-flow)
+  - [Data sources](#data-sources)
+  - [Search](#search)
+  - [Cron jobs / scheduled tasks](#cron-jobs--scheduled-tasks)
+  - [Dependencies](#dependencies)
+  - [What changes are needed to `aqie-back-end`?](#what-changes-are-needed-to-aqie-back-end)
+  - [Key design & implementation choices](#key-design--implementation-choices)
+  - [Pollutants, timeframes and data shapes](#pollutants-timeframes-and-data-shapes)
+  - [Known limitations (this is a prototype, not production)](#known-limitations-this-is-a-prototype-not-production)
+  - [Feasibility assessment](#feasibility-assessment)
+  - [Running this prototype locally](#running-this-prototype-locally)
 - [Requirements](#requirements)
   - [Node.js](#nodejs)
 - [GOV.UK Prototype Kit and GOV.UK Frontend](#govuk-prototype-kit-and-govuk-frontend)
@@ -26,6 +42,230 @@ the [GOV.UK Frontend](https://github.com/alphagov/govuk-frontend).
   - [Debug docker](#debug-docker)
 - [Licence](#licence)
   - [About the licence](#about-the-licence)
+
+---
+
+# About this prototype
+
+This repo is a **non-production spike** exploring interactive hourly air-quality graphs for each
+monitoring site, for the DEFRA "Get air pollution data" service. It lets a user find a monitoring
+station (by town, postcode or station name), see a **pollutant summary table** (24-hour average, data
+capture %, hourly exceedances) and **interactive hourly charts** (small multiples or a combined
+overlay) across several timeframes.
+
+It was built against two acceptance criteria:
+
+1. A prototype (non-production) graph using **live** monitoring-site data, meeting **government
+   accessibility standards**.
+2. An **assessment of the feasibility and effort** of delivering hourly site graphs into the Get Data
+   service — see [Feasibility assessment](#feasibility-assessment).
+
+> [!IMPORTANT]
+> Everything in this spike is **self-contained in this repo** — it makes **no changes to
+> `aqie-back-end`**. The proper production home for some of this logic is the back-end; that is
+> documented in [docs/productionisation-notes.md](docs/productionisation-notes.md), together with a migration
+> checklist and the verified feed facts.
+
+## Architecture & data flow
+
+All external calls are made **server-side** (Express), so there is no browser cross-origin resource
+sharing (CORS) and no API keys in
+the client. The summary table and data tables are **rendered on the server** (they work with
+JavaScript disabled); the D3 charts are layered on top as progressive enhancement, hydrated from a
+JSON block embedded in the page.
+
+```mermaid
+flowchart LR
+  U["User's browser"] -->|HTTP| D["This demo<br/>Express + Nunjucks · :3000"]
+  D -->|"GET /measurements<br/>(station list + features of interest)"| B["aqie-back-end · :3001<br/>(existing, unchanged)"]
+  D -->|"GET GetObservation<br/>(hourly series)"| S["DEFRA Sensor Observation<br/>Service (SOS) feed · public"]
+  D -->|"geocode postcode<br/>or place name"| P["postcodes.io<br/>(public, no auth)"]
+  B -->|"reads"| M[("MongoDB<br/>measurements")]
+  B -.->|"schedulers populate"| X["DEFRA site-process / SOS<br/>+ Ricardo API"]
+```
+
+## Data sources
+
+| Source                                            | Provides                                                                                                 | Auth          | Called by                                                      | Notes                                                                                                                                                        |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`aqie-back-end` `GET /measurements`** (`:3001`) | Station list (name, `localSiteID`, coordinates) and, per pollutant, the **feature-of-interest (FOI)** id | None (local)  | Demo server ([app/lib/aqie-api.js](app/lib/aqie-api.js))       | Read-only; the back-end is **not modified**. Data is populated by the back-end's own cron jobs.                                                              |
+| **DEFRA SOS `GetObservation`** feed               | The **full hourly time series** per pollutant (Sensor Web Enablement (SWE) encoded XML)                  | None (public) | Demo server ([app/lib/sos-history.js](app/lib/sos-history.js)) | The demo fetches and decodes this **directly**. This is the data the back-end currently fetches then discards (`/measurements` keeps only the latest value). |
+| **postcodes.io**                                  | Latitude/longitude for a postcode or outcode (`/postcodes`, `/outcodes`) and for a town or place name (`/places`, OS Open Names) | None (public) | Demo server ([app/lib/search.js](app/lib/search.js))           | Nearest 5 stations ranked by haversine distance. See [Search](#search) for the resolution order.                                                             |
+
+> [!NOTE]
+> **Why the SOS feed directly?** No existing back-end endpoint returns the hourly series —
+> `/measurements` truncates it to the latest value (`swe:values.split(',').pop()`) and `/aurnData`
+> (PR #157) returns a single Daily Air Quality Index (DAQI) value per station, which cannot drive a
+> per-pollutant hourly graph.
+> The public SOS feed needs **no credentials**, so the demo can stay self-contained. See
+> [docs/productionisation-notes.md](docs/productionisation-notes.md).
+
+## Search
+
+A user can search by **town or place name**, **postcode or outcode**, or **monitoring station name**.
+[app/lib/search.js](app/lib/search.js) resolves a query in this order, stopping at the first hit:
+
+| # | Query looks like            | Lookup                                  | Result                                          |
+| - | --------------------------- | --------------------------------------- | ----------------------------------------------- |
+| 1 | Postcode or outcode         | postcodes.io `/postcodes` or `/outcodes` | 5 nearest stations, with distance in km          |
+| 2 | Part of a station name      | Local substring match on `/measurements` | Up to 10 matching stations, no distance shown    |
+| 3 | Anything else (town, place) | postcodes.io `/places` (OS Open Names)   | 5 nearest stations, with distance in km          |
+| 4 | No match                    | —                                        | Empty results, with a prompt to try another term |
+
+Station names are matched **before** the place lookup on purpose: "Manchester" and "Marylebone Road"
+both exist in OS Open Names, so geocoding first would hide the station the user most likely meant.
+
+Distances are great-circle (haversine) from the geocoded point to each station's coordinates, which
+`/measurements` stores as `[latitude, longitude]`.
+
+## Cron jobs / scheduled tasks
+
+- **This demo has _no_ cron jobs and no database.** It fetches live data on every request.
+- The data it reads from **`aqie-back-end`** _is_ populated by that service's schedulers (which write
+  to the back-end's MongoDB). Relevant ones: pollutant measurements (hourly), monitoring-station cache
+  (every 6h), AURN (Automatic Urban and Rural Network) / DAQI (every 30 min), forecasts. On a **cold
+  back-end start** these run a ~90-second
+  populate before the API binds, and `/measurements` is empty until the first pollutants run completes.
+- **Productionisation:** if the hourly series moves to the back-end (recommended), consider a scheduler
+  and/or a cache there rather than fetching SOS live per request — see
+  [docs/productionisation-notes.md](docs/productionisation-notes.md).
+
+## Dependencies
+
+Runtime (see [package.json](package.json)):
+
+- **`govuk-prototype-kit` 13.18.0** + **`govuk-frontend` 5.11.1** — Express/Nunjucks server and GDS components.
+- **`d3` 7.9.0** — Scalable Vector Graphics (SVG) charts. Prototype Kit 13 does not bundle `application.js`, so D3 is **vendored**
+  at [app/assets/javascripts/vendor/d3.min.js](app/assets/javascripts/vendor/d3.min.js) and loaded via a
+  `<script>` tag on the station page only.
+- **`fast-xml-parser`** — decodes the SOS XML response.
+- **Node.js ≥ 22** — uses the global `fetch`, `AbortController` and `Intl` timezone formatting; no polyfills.
+
+There is **no database, message queue, or build step** in this repo.
+
+## What changes are needed to `aqie-back-end`?
+
+**For this demo: none.** It relies only on the existing, unchanged `GET /measurements` endpoint.
+
+**For production**, the hourly-series fetch + SWE decode in [app/lib/sos-history.js](app/lib/sos-history.js)
+should move into `aqie-back-end` as a new **`GET /measurements/history`** endpoint (it was built and
+verified there during the spike, then reverted to keep this repo self-contained). The demo's
+`getHistory()` would then become a single call to that endpoint. The rationale, the exact endpoint
+contract, verified SOS feed facts, and a step-by-step migration checklist are in
+[docs/productionisation-notes.md](docs/productionisation-notes.md).
+
+## Key design & implementation choices
+
+| Choice                                                               | Why                                                                                                                       |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Self-contained demo, no back-end change**                          | Fastest path to a testable spike; the correct home is documented for later                                                |
+| **Hourly series from the public SOS feed**                           | No credentials; reflects the true marginal effort to build the feature                                                    |
+| **Stations sourced from `/measurements`, not `/monitoringStations`** | The two collections share **no ids** (`MY1` vs `UKA00315`); only `/measurements` carries the FOIs the series lookup needs |
+| **Canonical pollutant aliasing** (`GE10`→PM10, `GR25`→PM2.5)         | The back-end stores raw parameter ids; the UI needs canonical pollutants                                                  |
+| **D3 v7 (SVG) charts**                                               | Accessibility (focusable, labelable) and MIT licence vs canvas/commercial libs                                            |
+| **Combined default + small multiples variant**                       | Combined is compact for spotting episodes at a glance; small multiples avoid conflating pollutants with different scales  |
+| **Server-side rendering + progressive enhancement**                  | Core info (tables) works with no JavaScript; charts enhance on top                                                        |
+| **Explicit legal limits (NO₂ 200, SO₂ 350 µg/m³ only)**              | "Hourly exceedances" only applies where an hourly legal limit exists; DAQI bands are a health index, not a legal limit    |
+| **Non-colour-only encoding** (colour + line style + legend)          | Web Content Accessibility Guidelines (WCAG) — do not rely on colour alone                                                 |
+| **Query-param-driven variants** (`?period=`, `?layout=`)             | Every variant is a shareable, bookmarkable link — useful for user research                                               |
+
+## Pollutants, timeframes and data shapes
+
+**Pollutant codes.** The back-end stores measurements keyed by the **raw** DEFRA `parameter_id`, which
+includes several variants per pollutant. [app/data/pollutants.js](app/data/pollutants.js) canonicalises
+them before display:
+
+| Raw codes              | Canonical | Displayed as     |
+| ---------------------- | --------- | ---------------- |
+| `PM25`, `GR25`         | `PM25`    | PM2.5            |
+| `PM10`, `GE10`, `GR10` | `PM10`    | PM10             |
+| `NO2`                  | `NO2`     | Nitrogen dioxide |
+| `O3`                   | `O3`      | Ozone            |
+| `SO2`                  | `SO2`     | Sulphur dioxide  |
+
+Other upstream codes (`NO`, `NOXasNO2`, `AP25`/`AT25`, `AP10`/`AT10`) are not DAQI pollutants and are
+ignored. Pollutants whose `featureOfInterest` is the sentinel `missingFOI` (or empty) are skipped —
+no series can be fetched for them.
+
+**Timeframes.** `?period=` maps to a request window and a resolution:
+
+| `period` | Window     | Resolution                          |
+| -------- | ---------- | ----------------------------------- |
+| `24h`    | now − 24h  | hourly                              |
+| `7d`     | now − 7d   | hourly                              |
+| `month`  | now − 1 mo | daily mean (Europe/London calendar) |
+| `year`   | now − 1 yr | daily mean (Europe/London calendar) |
+
+Hourly over a year is ~8,760 points per pollutant, so long ranges are aggregated to daily means; the
+trade-off is that intra-day peaks are hidden at those ranges.
+
+**Back-end response shapes** (both read-only, unchanged):
+
+```
+GET /measurements       → { measurements: [ { name, localSiteID, location, updated,
+                            pollutants: { <CODE>: { featureOfInterest, time: { date }, value, exception } } } ] }
+GET /monitoringStations → { stations: [ { name, area, localAuthority, localSiteID, areaType,
+                            location: { coordinates: [lat, lng] }, pollutants: [] } ] }
+```
+
+`location.coordinates` is **`[latitude, longitude]`** (latitude first — not GeoJSON order). Distances
+are great-circle (haversine) from the geocoded search point.
+
+**Internal history shape** returned by `getHistory()` — deliberately identical to the proposed
+back-end endpoint, so productionising is a drop-in swap:
+
+```
+{ siteId, period, resolution: 'hourly' | 'daily', pollutants: { <CODE>: [ { time, value } ] } }
+```
+
+Values of `-9999`, `-99`, `NaN` and negatives are treated as missing and dropped, which is what the
+data-capture percentage measures.
+
+## Known limitations (this is a prototype, not production)
+
+- **No caching or retry** — the SOS feed is hit live on each request and can be slow or return `504`s;
+  a failed pollutant degrades to an empty series rather than failing the page.
+- **Long timeframes are heavy** — the no-JavaScript data tables for the year view render ~365 rows × 5
+  pollutants.
+- **Combined chart uses a shared y-axis**, so low-value pollutants (e.g. SO₂) appear flat next to O₃.
+- **Search results are not distance-capped** — a town far from any monitor still returns its 5
+  nearest stations, which may be tens of kilometres away.
+- **Ambiguous place names take the first match** (`/places` is queried with `limit=1`), so there is no
+  disambiguation step for, say, the several Newports.
+- **Service-navigation tabs** from the mockups are omitted to avoid dead links.
+- Deferred production concerns (caching, rate-limiting, downsampling, stored history, auth/proxy) are
+  listed in [docs/productionisation-notes.md](docs/productionisation-notes.md).
+
+## Feasibility assessment
+
+The second acceptance criterion. Short answer: **feasible, with low–moderate back-end effort.**
+
+- **Back-end (low–moderate).** No new data source and no credentials are needed — the public SOS
+  `GetObservation` feed already returns the full hourly series and the back-end already fetches it for
+  `/measurements`, then discards all but the latest value. The change is: decode the whole
+  `swe:values` block instead of the last token, build the temporal range from a requested period,
+  aggregate/downsample long ranges, and add tests. Endpoint contract and file layout are in
+  [docs/productionisation-notes.md](docs/productionisation-notes.md).
+- **Front end (moderate).** Location search, D3 charts, accessible equivalents and the layout variants
+  were the bulk of the work in this spike; it was all achievable within the Prototype Kit and reached
+  **0 axe-core WCAG 2.2 A/AA violations** across all pages, verified with keyboard-only navigation,
+  contrast checks and JavaScript disabled.
+- **Main risks.** SOS origin reliability (`504`s observed during the spike), performance of very long
+  ranges, and timezone handling at aggregation boundaries.
+- **Productionisation adds** caching, rate-limiting/retry, downsampling and possibly stored history —
+  the operational work, rather than the feature itself, is where the remaining effort sits.
+
+## Running this prototype locally
+
+1. Start `aqie-back-end` on `:3001` (it provides `/measurements`), following that repo's own README.
+   It is the **standard, unmodified** service — no local changes to it are needed. Allow ~90 seconds
+   for its startup populate before the API binds, then confirm with
+   `curl http://localhost:3001/measurements`.
+2. In this repo: `npm install`, then `npm run dev` and open `http://localhost:3000`.
+3. Configuration: [.env](.env) sets `AQIE_BACKEND_URL=http://localhost:3001` (defaults to that if unset).
+   `SOS_URL` can override the SOS feed base if needed.
+
+---
 
 ## Requirements
 

@@ -1,19 +1,37 @@
 {% extends "layouts/main.html" %}
+{% from "govuk/components/input/macro.njk" import govukInput %}
+{% from "govuk/components/button/macro.njk" import govukButton %}
 
-{% set pageName="Home" %}
+{% set pageName = "Search" %}
 
 {% block content %}
 
 <div class="govuk-grid-row">
   <div class="govuk-grid-column-two-thirds">
 
-    {% include "govuk-prototype-kit/includes/homepage-top.njk" %}
+    <h1 class="govuk-heading-xl">Get air pollution data</h1>
 
-    <h1 class="govuk-heading-xl">
-      {{ serviceName }}
-    </h1>
+    <p class="govuk-body-l">
+      Find a monitoring station and view the last 24 hours of hourly pollutant
+      readings.
+    </p>
 
-    {% include "govuk-prototype-kit/includes/homepage-bottom.njk" %}
+    <form method="get" action="/stations" novalidate>
+      {{ govukInput({
+        label: {
+          text: "Enter a town, postcode or monitoring station name",
+          classes: "govuk-label--m",
+          isPageHeading: false
+        },
+        hint: { text: "For example, Ipswich, NW1 6XE or Marylebone Road" },
+        classes: "govuk-!-width-two-thirds",
+        id: "q",
+        name: "q"
+      }) }}
+
+      {{ govukButton({ text: "Search" }) }}
+    </form>
+
   </div>
 </div>
 
