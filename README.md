@@ -86,10 +86,10 @@ flowchart LR
 
 ## Data sources
 
-| Source                                            | Provides                                                                                                 | Auth          | Called by                                                      | Notes                                                                                                                                                        |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **`aqie-back-end` `GET /measurements`** (`:3001`) | Station list (name, `localSiteID`, coordinates) and, per pollutant, the **feature-of-interest (FOI)** id | None (local)  | Demo server ([app/lib/aqie-api.js](app/lib/aqie-api.js))       | Read-only; the back-end is **not modified**. Data is populated by the back-end's own cron jobs.                                                              |
-| **DEFRA SOS `GetObservation`** feed               | The **full hourly time series** per pollutant (Sensor Web Enablement (SWE) encoded XML)                  | None (public) | Demo server ([app/lib/sos-history.js](app/lib/sos-history.js)) | The demo fetches and decodes this **directly**. This is the data the back-end currently fetches then discards (`/measurements` keeps only the latest value). |
+| Source                                            | Provides                                                                                                                         | Auth          | Called by                                                      | Notes                                                                                                                                                        |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`aqie-back-end` `GET /measurements`** (`:3001`) | Station list (name, `localSiteID`, coordinates) and, per pollutant, the **feature-of-interest (FOI)** id                         | None (local)  | Demo server ([app/lib/aqie-api.js](app/lib/aqie-api.js))       | Read-only; the back-end is **not modified**. Data is populated by the back-end's own cron jobs.                                                              |
+| **DEFRA SOS `GetObservation`** feed               | The **full hourly time series** per pollutant (Sensor Web Enablement (SWE) encoded XML)                                          | None (public) | Demo server ([app/lib/sos-history.js](app/lib/sos-history.js)) | The demo fetches and decodes this **directly**. This is the data the back-end currently fetches then discards (`/measurements` keeps only the latest value). |
 | **postcodes.io**                                  | Latitude/longitude for a postcode or outcode (`/postcodes`, `/outcodes`) and for a town or place name (`/places`, OS Open Names) | None (public) | Demo server ([app/lib/search.js](app/lib/search.js))           | Nearest 5 stations ranked by haversine distance. See [Search](#search) for the resolution order.                                                             |
 
 > [!NOTE]
@@ -105,12 +105,12 @@ flowchart LR
 A user can search by **town or place name**, **postcode or outcode**, or **monitoring station name**.
 [app/lib/search.js](app/lib/search.js) resolves a query in this order, stopping at the first hit:
 
-| # | Query looks like            | Lookup                                  | Result                                          |
-| - | --------------------------- | --------------------------------------- | ----------------------------------------------- |
-| 1 | Postcode or outcode         | postcodes.io `/postcodes` or `/outcodes` | 5 nearest stations, with distance in km          |
-| 2 | Part of a station name      | Local substring match on `/measurements` | Up to 10 matching stations, no distance shown    |
-| 3 | Anything else (town, place) | postcodes.io `/places` (OS Open Names)   | 5 nearest stations, with distance in km          |
-| 4 | No match                    | —                                        | Empty results, with a prompt to try another term |
+| #   | Query looks like            | Lookup                                   | Result                                           |
+| --- | --------------------------- | ---------------------------------------- | ------------------------------------------------ |
+| 1   | Postcode or outcode         | postcodes.io `/postcodes` or `/outcodes` | 5 nearest stations, with distance in km          |
+| 2   | Part of a station name      | Local substring match on `/measurements` | Up to 10 matching stations, no distance shown    |
+| 3   | Anything else (town, place) | postcodes.io `/places` (OS Open Names)   | 5 nearest stations, with distance in km          |
+| 4   | No match                    | —                                        | Empty results, with a prompt to try another term |
 
 Station names are matched **before** the place lookup on purpose: "Manchester" and "Marylebone Road"
 both exist in OS Open Names, so geocoding first would hide the station the user most likely meant.
@@ -167,7 +167,7 @@ contract, verified SOS feed facts, and a step-by-step migration checklist are in
 | **Server-side rendering + progressive enhancement**                  | Core info (tables) works with no JavaScript; charts enhance on top                                                        |
 | **Explicit legal limits (NO₂ 200, SO₂ 350 µg/m³ only)**              | "Hourly exceedances" only applies where an hourly legal limit exists; DAQI bands are a health index, not a legal limit    |
 | **Non-colour-only encoding** (colour + line style + legend)          | Web Content Accessibility Guidelines (WCAG) — do not rely on colour alone                                                 |
-| **Query-param-driven variants** (`?period=`, `?layout=`)             | Every variant is a shareable, bookmarkable link — useful for user research                                               |
+| **Query-param-driven variants** (`?period=`, `?layout=`)             | Every variant is a shareable, bookmarkable link — useful for user research                                                |
 
 ## Pollutants, timeframes and data shapes
 
@@ -262,8 +262,24 @@ The second acceptance criterion. Short answer: **feasible, with low–moderate b
    for its startup populate before the API binds, then confirm with
    `curl http://localhost:3001/measurements`.
 2. In this repo: `npm install`, then `npm run dev` and open `http://localhost:3000`.
-3. Configuration: [.env](.env) sets `AQIE_BACKEND_URL=http://localhost:3001` (defaults to that if unset).
+3. Configuration: [.env](.env) sets `AQIE_BACK_END_URL=http://localhost:3001` (defaults to that if unset).
    `SOS_URL` can override the SOS feed base if needed.
+
+### Running on CDP
+
+The localhost default is only useful locally. When deployed, two things must be in place or every
+outbound call fails with `fetch failed`:
+
+- **`AQIE_BACK_END_URL` must be set** for the environment (via `cdp-app-config`) to the CDP-internal
+  address of `aqie-back-end`. It is not sensitive, so it belongs in `cdp-app-config` rather than the
+  Secrets page (a secret works too — both arrive as environment variables). Without it the app calls
+  `http://localhost:3001` inside its own container and gets a connection failure on the station search.
+- **Outbound internet goes through the CDP squid proxy.** Node's global `fetch` ignores the standard
+  `*_PROXY` environment variables, so [app/lib/proxy.js](app/lib/proxy.js) installs an `undici`
+  `EnvHttpProxyAgent` as the global dispatcher when `CDP_HTTPS_PROXY` (or `HTTPS_PROXY`/`HTTP_PROXY`)
+  is present. This is what allows the public DEFRA SOS feed to be reached from a deployed container.
+  Internal hosts (`NO_PROXY`, plus `localhost` and `.cdp-int.defra.cloud`) bypass the proxy, so the
+  back-end call is made directly.
 
 ---
 

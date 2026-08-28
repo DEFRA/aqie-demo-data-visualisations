@@ -6,6 +6,9 @@
 const govukPrototypeKit = require('govuk-prototype-kit')
 const router = govukPrototypeKit.requests.setupRouter()
 
+// Must load before any outbound call so the proxy dispatcher is in place.
+require('./lib/proxy')
+
 const { getStations, getStationById, getHistory } = require('./lib/aqie-api')
 const { findStations } = require('./lib/search')
 const { buildViewModel } = require('./lib/station-view')

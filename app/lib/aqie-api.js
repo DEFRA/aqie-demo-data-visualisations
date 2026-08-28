@@ -1,21 +1,22 @@
 //
 // Server-side client for the aqie-back-end. All calls run on the Express
 // server (never the browser) so there is no CORS and the API shape stays
-// controlled. Base URL comes from AQIE_BACKEND_URL.
+// controlled. Base URL comes from AQIE_BACK_END_URL.
 //
 
 const { fetchHistory } = require('./sos-history')
 
-const BASE = process.env.AQIE_BACKEND_URL || 'http://localhost:3001'
+const BASE = process.env.AQIE_BACK_END_URL || 'http://localhost:3001'
 
 const STATIONS_TIMEOUT_MS = 5000
 const MISSING_FOI = 'missingFOI'
 
 async function fetchJson(path, timeoutMs) {
+  const url = `${BASE}${path}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(`${BASE}${path}`, {
+    const response = await fetch(url, {
       signal: controller.signal
     })
     if (!response.ok) {
@@ -23,7 +24,10 @@ async function fetchJson(path, timeoutMs) {
     }
     return await response.json()
   } catch (error) {
-    throw new Error(`Could not reach the air quality service: ${error.message}`)
+    const cause = error.cause?.code ? ` (${error.cause.code})` : ''
+    throw new Error(
+      `Could not reach the air quality service at ${url}: ${error.message}${cause}`
+    )
   } finally {
     clearTimeout(timer)
   }
