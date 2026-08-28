@@ -171,18 +171,16 @@ function aggregateDaily(series) {
 }
 
 async function fetchSeriesForFoi(foi, range, resolution) {
+  const url = `${SOS_BASE}${range}&featureOfInterest=${foi}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
-    const response = await fetch(
-      `${SOS_BASE}${range}&featureOfInterest=${foi}`,
-      {
-        headers: { 'Cache-Control': 'no-cache' },
-        signal: controller.signal
-      }
-    )
+    const response = await fetch(url, {
+      headers: { 'Cache-Control': 'no-cache' },
+      signal: controller.signal
+    })
     if (!response.ok) {
-      throw new Error(`SOS responded ${response.status}`)
+      throw new Error(`SOS responded ${response.status} for ${foi}`)
     }
     const dataArray = extractDataArray(parser.parse(await response.text()))
     if (!dataArray) {

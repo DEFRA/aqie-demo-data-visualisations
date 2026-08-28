@@ -1,0 +1,30 @@
+//
+// CDP routes all outbound traffic through a squid proxy. Node's global fetch
+// ignores the standard *_PROXY environment variables, so the dispatcher has to
+// be set explicitly or every outbound call fails with an opaque "fetch failed".
+//
+
+const { EnvHttpProxyAgent, setGlobalDispatcher } = require('undici')
+
+const proxyUrl =
+  process.env.CDP_HTTPS_PROXY ||
+  process.env.CDP_HTTP_PROXY ||
+  process.env.HTTPS_PROXY ||
+  process.env.HTTP_PROXY
+
+// Internal traffic (the back-end) must bypass squid, which only brokers egress.
+const noProxy = [process.env.NO_PROXY, 'localhost,127.0.0.1,.cdp-int.defra.cloud']
+  .filter(Boolean)
+  .join(',')
+
+if (proxyUrl) {
+  setGlobalDispatcher(
+    new EnvHttpProxyAgent({
+      httpProxy: proxyUrl,
+      httpsProxy: proxyUrl,
+      noProxy
+    })
+  )
+}
+
+module.exports = { proxyUrl: proxyUrl || null }
