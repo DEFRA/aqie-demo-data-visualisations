@@ -271,10 +271,17 @@ The localhost default is only useful locally. When deployed, two things must be 
 outbound call fails with `fetch failed`:
 
 - **`AQIE_BACK_END_URL` must be set** for the environment (via `cdp-app-config`) to the internal
-  service name of `aqie-back-end` — `http://aqie-back-end`, the same value `aqie-maps-prototype`
-  uses. It is not sensitive, so it belongs in `cdp-app-config` rather than the
-  Secrets page (a secret works too — both arrive as environment variables). Without it the app calls
-  `http://localhost:3001` inside its own container and gets a connection failure on the station search.
+  address of `aqie-back-end` — `https://aqie-back-end.<env>.cdp-int.defra.cloud`, the form the
+  deployed `aqie-front-end` uses (`src/config/index.js`). The bare service name `http://aqie-back-end`
+  is the Docker Compose form and is not guaranteed to resolve on CDP. The value is not sensitive, so
+  it belongs in `cdp-app-config` rather than the Secrets page (a secret works too — both arrive as
+  environment variables). Without it the app calls `http://localhost:3001` inside its own container
+  and gets a connection failure on the station search.
+- **`.cdp-int.defra.cloud` hosts are internal.** They cannot be curled from a laptop without the
+  Defra VPN — an SSL/connection error from your own machine says nothing about the deployed app.
+  Check from inside the container instead: `GET /debug/connectivity` reports the resolved back-end
+  URL, whether a proxy is configured, and the status of `/health`, `/measurements` and the SOS host.
+  The CDP Portal terminal (dev/test environments) is the other option — the image ships `curl`.
 - **Outbound internet goes through the CDP squid proxy.** Node's global `fetch` ignores the standard
   `*_PROXY` environment variables, so [app/lib/proxy.js](app/lib/proxy.js) installs an `undici`
   `EnvHttpProxyAgent` as the global dispatcher when `CDP_HTTPS_PROXY` (or `HTTPS_PROXY`/`HTTP_PROXY`)

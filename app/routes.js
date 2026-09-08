@@ -9,7 +9,12 @@ const router = govukPrototypeKit.requests.setupRouter()
 // Must load before any outbound call so the proxy dispatcher is in place.
 require('./lib/proxy')
 
-const { getStations, getStationById, getHistory } = require('./lib/aqie-api')
+const {
+  getStations,
+  getStationById,
+  getHistory,
+  checkConnectivity
+} = require('./lib/aqie-api')
 const { findStations } = require('./lib/search')
 const { buildViewModel } = require('./lib/station-view')
 
@@ -20,6 +25,14 @@ const NOT_FOUND = 404
 function pick(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback
 }
+
+router.get('/debug/connectivity', async (req, res, next) => {
+  try {
+    res.json(await checkConnectivity())
+  } catch (error) {
+    next(error)
+  }
+})
 
 router.get('/stations', async (req, res, next) => {
   try {
