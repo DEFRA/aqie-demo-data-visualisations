@@ -270,16 +270,21 @@ The second acceptance criterion. Short answer: **feasible, with low–moderate b
 The localhost default is only useful locally. When deployed, two things must be in place or every
 outbound call fails with `fetch failed`:
 
-- **`AQIE_BACK_END_URL` must be set** for the environment (via `cdp-app-config`) to the CDP-internal
-  address of `aqie-back-end`. It is not sensitive, so it belongs in `cdp-app-config` rather than the
+- **`AQIE_BACK_END_URL` must be set** for the environment (via `cdp-app-config`) to the internal
+  service name of `aqie-back-end` — `http://aqie-back-end`, the same value `aqie-maps-prototype`
+  uses. It is not sensitive, so it belongs in `cdp-app-config` rather than the
   Secrets page (a secret works too — both arrive as environment variables). Without it the app calls
   `http://localhost:3001` inside its own container and gets a connection failure on the station search.
 - **Outbound internet goes through the CDP squid proxy.** Node's global `fetch` ignores the standard
   `*_PROXY` environment variables, so [app/lib/proxy.js](app/lib/proxy.js) installs an `undici`
   `EnvHttpProxyAgent` as the global dispatcher when `CDP_HTTPS_PROXY` (or `HTTPS_PROXY`/`HTTP_PROXY`)
   is present. This is what allows the public DEFRA SOS feed to be reached from a deployed container.
-  Internal hosts (`NO_PROXY`, plus `localhost` and `.cdp-int.defra.cloud`) bypass the proxy, so the
-  back-end call is made directly.
+  Internal hosts (`NO_PROXY`, `localhost`, `.cdp-int.defra.cloud` and the host from
+  `AQIE_BACK_END_URL`) bypass the proxy, so the back-end call is made directly.
+- **The SOS host must be allowed through squid.** Unlike `aqie-maps-prototype`, which only calls other
+  CDP services, this app fetches `uk-air.defra.gov.uk` server-side. If that host is not on the
+  environment's egress allow-list every series comes back empty; the logged
+  `SOS history failed …` lines confirm it.
 
 ---
 

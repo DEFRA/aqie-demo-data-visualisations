@@ -68,6 +68,12 @@ async function getHistory(siteId, period = '24h') {
     }
   }
 
+  if (Object.keys(fois).length === 0) {
+    console.error(
+      `No usable featureOfInterest ids in /measurements for ${siteId} — the back-end record has none, so no series can be fetched`
+    )
+  }
+
   const { pollutants, resolution } = await fetchHistory(fois, period)
   return { siteId, period, resolution, pollutants }
 }

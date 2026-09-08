@@ -206,7 +206,12 @@ async function fetchHistory(foisByCode, period) {
       try {
         const series = await fetchSeriesForFoi(foi, range, resolution)
         return { code, series, ok: true }
-      } catch {
+      } catch (error) {
+        // Logged because a swallowed failure is indistinguishable from "no data"
+        // (on CDP the usual cause is squid blocking the SOS host).
+        console.error(
+          `SOS history failed for ${code} (${foi}): ${error.message}${error.cause?.code ? ` (${error.cause.code})` : ''}`
+        )
         return { code, series: [], ok: false }
       }
     })
