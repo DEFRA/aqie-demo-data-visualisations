@@ -1,0 +1,21 @@
+services:
+  aqie-demo-data-visualisations:
+    build:
+      context: .
+      target: development
+    ports:
+      - '3000:3000'
+    env_file:
+      - .env
+    environment:
+      PORT: 3000
+      NODE_ENV: development
+    networks:
+      - cdp-tenant
+    volumes:
+      - ./app:/home/node/app
+
+networks:
+  cdp-tenant:
+    name: cdp-tenant
+    external: true

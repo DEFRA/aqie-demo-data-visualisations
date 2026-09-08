@@ -8,6 +8,7 @@ const { fetchHistory, SOS_BASE } = require('./sos-history')
 const { proxyUrl } = require('./proxy')
 
 const BASE = process.env.AQIE_BACK_END_URL || 'http://localhost:3001'
+const API_KEY = process.env.CDP_X_API_KEY
 
 const STATIONS_TIMEOUT_MS = 5000
 const MISSING_FOI = 'missingFOI'
@@ -17,9 +18,21 @@ async function fetchJson(path, timeoutMs) {
   const url = `${BASE}${path}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const headers = {
+    'accept-encoding': 'identity'
+  }
+  
+  // Only add API key for ephemeral gateway (external) access.
+  // Used when running the demo locally but connecting to backend on CDP.
+  const isEphemeralGateway = url.includes('ephemeral-protected.api')
+  if (isEphemeralGateway && process.env.CDP_X_API_KEY) {
+    headers['x-api-key'] = process.env.CDP_X_API_KEY
+  }
+  
   try {
     const response = await fetch(url, {
-      signal: controller.signal
+      signal: controller.signal,
+      headers
     })
     if (!response.ok) {
       throw new Error(`Backend responded ${response.status} for ${path}`)
