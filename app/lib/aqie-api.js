@@ -4,13 +4,15 @@
 // controlled. Base URL comes from AQIE_BACK_END_URL.
 //
 
-const { fetchHistory } = require('./sos-history')
+const { fetchHistory, SOS_BASE } = require('./sos-history')
+const { proxyUrl } = require('./proxy')
 
 const BASE = process.env.AQIE_BACK_END_URL || 'http://localhost:3001'
 const API_KEY = process.env.CDP_X_API_KEY
 
 const STATIONS_TIMEOUT_MS = 5000
 const MISSING_FOI = 'missingFOI'
+const PROBE_TIMEOUT_MS = 8000
 
 async function fetchJson(path, timeoutMs) {
   const url = `${BASE}${path}`
@@ -91,4 +93,51 @@ async function getHistory(siteId, period = '24h') {
   return { siteId, period, resolution, pollutants }
 }
 
-module.exports = { getStations, getStationById, getLatest, getHistory, BASE }
+// The .cdp-int hosts are unreachable from a laptop, so connectivity can only be
+// proven from inside the running container.
+async function probe(url) {
+  const started = Date.now()
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
+    })
+    return {
+      url,
+      ok: response.ok,
+      status: response.status,
+      ms: Date.now() - started
+    }
+  } catch (error) {
+    return {
+      url,
+      ok: false,
+      error: `${error.message}${error.cause?.code ? ` (${error.cause.code})` : ''}`,
+      ms: Date.now() - started
+    }
+  }
+}
+
+async function checkConnectivity() {
+  const sosHost = new URL(SOS_BASE).origin
+  const [health, measurements, sos, geocoder] = await Promise.all([
+    probe(`${BASE}/health`),
+    probe(`${BASE}/measurements`),
+    probe(sosHost),
+    probe('https://api.postcodes.io/postcodes/SW1A1AA')
+  ])
+  return {
+    backEndUrl: BASE,
+    // Value withheld: proxy URLs can carry credentials.
+    proxyConfigured: Boolean(proxyUrl),
+    checks: { health, measurements, sos, geocoder }
+  }
+}
+
+module.exports = {
+  getStations,
+  getStationById,
+  getLatest,
+  getHistory,
+  checkConnectivity,
+  BASE
+}

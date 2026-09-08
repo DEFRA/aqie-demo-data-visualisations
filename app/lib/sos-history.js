@@ -233,5 +233,6 @@ module.exports = {
   buildRange,
   decodeSweValues,
   aggregateDaily,
-  extractDataArray
+  extractDataArray,
+  SOS_BASE
 }
