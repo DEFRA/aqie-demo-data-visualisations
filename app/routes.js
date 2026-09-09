@@ -26,14 +26,13 @@ function pick(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback
 }
 
-router.get('/debug/connectivity', async (req, res, next) => {
+router.get('/', async (req, res, next) => {
   try {
-    res.json(await checkConnectivity())
+    res.render('index', { connectivity: await checkConnectivity() })
   } catch (error) {
     next(error)
   }
 })
-
 router.get('/stations', async (req, res, next) => {
   try {
     const q = (req.query.q || '').trim()

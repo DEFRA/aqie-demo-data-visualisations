@@ -82,41 +82,40 @@ async function getHistory(siteId, period = '24h') {
 
 // The .cdp-int hosts are unreachable from a laptop, so connectivity can only be
 // proven from inside the running container.
-async function probe(url) {
-  const started = Date.now()
+async function probe(name, url) {
   try {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
     })
     return {
+      name,
       url,
       ok: response.ok,
-      status: response.status,
-      ms: Date.now() - started
+      detail: `HTTP ${response.status}`
     }
   } catch (error) {
     return {
+      name,
       url,
       ok: false,
-      error: `${error.message}${error.cause?.code ? ` (${error.cause.code})` : ''}`,
-      ms: Date.now() - started
+      detail: `${error.message}${error.cause?.code ? ` (${error.cause.code})` : ''}`
     }
   }
 }
 
 async function checkConnectivity() {
   const sosHost = new URL(SOS_BASE).origin
-  const [health, measurements, sos, geocoder] = await Promise.all([
-    probe(`${BASE}/health`),
-    probe(`${BASE}/measurements`),
-    probe(sosHost),
-    probe('https://api.postcodes.io/postcodes/SW1A1AA')
+  const checks = await Promise.all([
+    probe('Air quality back end', `${BASE}/measurements`),
+    probe('DEFRA SOS feed', sosHost),
+    probe('Postcode lookup', 'https://api.postcodes.io/postcodes/SW1A1AA')
   ])
   return {
+    ok: checks.every((check) => check.ok),
     backEndUrl: BASE,
     // Value withheld: proxy URLs can carry credentials.
     proxyConfigured: Boolean(proxyUrl),
-    checks: { health, measurements, sos, geocoder }
+    checks
   }
 }
 

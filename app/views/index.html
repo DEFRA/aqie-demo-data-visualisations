@@ -1,6 +1,7 @@
 {% extends "layouts/main.html" %}
 {% from "govuk/components/input/macro.njk" import govukInput %}
 {% from "govuk/components/button/macro.njk" import govukButton %}
+{% from "govuk/components/tag/macro.njk" import govukTag %}
 
 {% set pageName = "Search" %}
 
@@ -8,6 +9,38 @@
 
 <div class="govuk-grid-row">
   <div class="govuk-grid-column-two-thirds">
+
+    {% if connectivity %}
+      {% if connectivity.ok %}
+        <p class="govuk-body">
+          {{ govukTag({ text: "Connected", classes: "govuk-tag--green" }) }}
+          <span class="govuk-!-margin-left-1">All data sources are reachable.</span>
+        </p>
+      {% else %}
+        <div class="govuk-notification-banner govuk-notification-banner--error" role="alert"
+             aria-labelledby="connectivity-banner-title" data-module="govuk-notification-banner">
+          <div class="govuk-notification-banner__header">
+            <h2 class="govuk-notification-banner__title" id="connectivity-banner-title">Not connected</h2>
+          </div>
+          <div class="govuk-notification-banner__content">
+            <p class="govuk-notification-banner__heading">
+              Some data sources cannot be reached, so readings may be missing.
+            </p>
+            <ul class="govuk-list govuk-list--bullet">
+              {% for check in connectivity.checks %}
+                {% if not check.ok %}
+                  <li>{{ check.name }} &mdash; {{ check.detail }}</li>
+                {% endif %}
+              {% endfor %}
+            </ul>
+            <p class="govuk-body">
+              Back end: <code>{{ connectivity.backEndUrl }}</code>.
+              Outbound proxy: {{ "configured" if connectivity.proxyConfigured else "not set" }}.
+            </p>
+          </div>
+        </div>
+      {% endif %}
+    {% endif %}
 
     <h1 class="govuk-heading-xl">Get air pollution data</h1>
 
