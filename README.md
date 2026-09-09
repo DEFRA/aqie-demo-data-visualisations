@@ -291,7 +291,7 @@ outbound call fails with `fetch failed`:
   `proxyTls: { allowH2: false }`: `CDP_HTTPS_PROXY` is an `https://` URL, and `undici` 8 offers `h2`
   in ALPN by default, so the connection to squid itself negotiates HTTP/2 — a `CONNECT` tunnel cannot
   be opened over an h2 session, and every egress call fails with `fetch failed (ERR_HTTP2_ERROR)`.
-  Note that a top-level `allowH2` does *not* cover this: `ProxyAgent` builds the proxy-side connector
+  Note that a top-level `allowH2` does _not_ cover this: `ProxyAgent` builds the proxy-side connector
   from `proxyTls` alone.
 - **The SOS host must be allowed through squid.** Unlike `aqie-maps-prototype`, which only calls other
   CDP services, this app fetches `uk-air.defra.gov.uk` server-side. If that host is not on the
