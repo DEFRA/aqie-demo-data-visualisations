@@ -36,7 +36,10 @@ if (proxyUrl) {
     new EnvHttpProxyAgent({
       httpProxy: proxyUrl,
       httpsProxy: proxyUrl,
-      noProxy
+      noProxy,
+      // undici 8 negotiates HTTP/2 by default; over the squid CONNECT tunnel
+      // that fails with ERR_HTTP2_ERROR, so pin the tunnel to HTTP/1.1.
+      allowH2: false
     })
   )
 }

@@ -287,7 +287,9 @@ outbound call fails with `fetch failed`:
   `EnvHttpProxyAgent` as the global dispatcher when `CDP_HTTPS_PROXY` (or `HTTPS_PROXY`/`HTTP_PROXY`)
   is present. This is what allows the public DEFRA SOS feed to be reached from a deployed container.
   Internal hosts (`NO_PROXY`, `localhost`, `.cdp-int.defra.cloud` and the host from
-  `AQIE_BACK_END_URL`) bypass the proxy, so the back-end call is made directly.
+  `AQIE_BACK_END_URL`) bypass the proxy, so the back-end call is made directly. The agent is pinned to
+  `allowH2: false`: `undici` 8 negotiates HTTP/2 by default, and over the squid `CONNECT` tunnel that
+  fails every outbound HTTPS call with `fetch failed (ERR_HTTP2_ERROR)`.
 - **The SOS host must be allowed through squid.** Unlike `aqie-maps-prototype`, which only calls other
   CDP services, this app fetches `uk-air.defra.gov.uk` server-side. If that host is not on the
   environment's egress allow-list every series comes back empty; the logged
