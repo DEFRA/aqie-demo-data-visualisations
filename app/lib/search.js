@@ -4,10 +4,13 @@
 // to a case-insensitive station-name match.
 //
 
+const { describeError } = require('./describe-error')
+
 const EARTH_RADIUS_KM = 6371
 const GEOCODE_TIMEOUT_MS = 5000
 const NEAREST_LIMIT = 5
 const NAME_MATCH_LIMIT = 10
+const NOT_FOUND = 404
 
 const POSTCODE_RE = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i
 const OUTCODE_RE = /^[A-Z]{1,2}\d[A-Z\d]?$/i
@@ -17,8 +20,18 @@ async function fetchJson(url) {
   const timer = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS)
   try {
     const response = await fetch(url, { signal: controller.signal })
-    return response.ok ? await response.json() : null
-  } catch {
+    if (!response.ok) {
+      // A 404 is a genuine "no such postcode"; anything else is a real fault.
+      if (response.status !== NOT_FOUND) {
+        console.error(`Geocode lookup ${url} responded ${response.status}`)
+      }
+      return null
+    }
+    return await response.json()
+  } catch (error) {
+    // Logged because callers treat null as "not found", which on CDP silently
+    // hides squid blocking postcodes.io behind an empty results page.
+    console.error(`Geocode lookup ${url} failed: ${describeError(error)}`)
     return null
   } finally {
     clearTimeout(timer)
@@ -82,8 +95,8 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRadians(lat1)) *
-      Math.cos(toRadians(lat2)) *
-      Math.sin(dLng / 2) ** 2
+    Math.cos(toRadians(lat2)) *
+    Math.sin(dLng / 2) ** 2
   return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 

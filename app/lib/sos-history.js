@@ -12,6 +12,7 @@
 //
 
 const { XMLParser } = require('fast-xml-parser')
+const { describeError } = require('./describe-error')
 
 const SOS_BASE =
   process.env.SOS_URL ||
@@ -210,7 +211,7 @@ async function fetchHistory(foisByCode, period) {
         // Logged because a swallowed failure is indistinguishable from "no data"
         // (on CDP the usual cause is squid blocking the SOS host).
         console.error(
-          `SOS history failed for ${code} (${foi}): ${error.message}${error.cause?.code ? ` (${error.cause.code})` : ''}`
+          `SOS history failed for ${code} (${foi}): ${describeError(error)}`
         )
         return { code, series: [], ok: false }
       }
