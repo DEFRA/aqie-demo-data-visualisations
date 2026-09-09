@@ -5,7 +5,7 @@
 //
 
 const { fetchHistory, SOS_BASE } = require('./sos-history')
-const { proxyUrl } = require('./proxy')
+const { proxyUrl, proxyScheme } = require('./proxy')
 
 const BASE = process.env.AQIE_BACK_END_URL || 'http://localhost:3001'
 
@@ -115,6 +115,7 @@ async function checkConnectivity() {
     backEndUrl: BASE,
     // Value withheld: proxy URLs can carry credentials.
     proxyConfigured: Boolean(proxyUrl),
+    proxyScheme,
     checks
   }
 }

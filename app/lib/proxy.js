@@ -37,11 +37,18 @@ if (proxyUrl) {
       httpProxy: proxyUrl,
       httpsProxy: proxyUrl,
       noProxy,
-      // undici 8 negotiates HTTP/2 by default; over the squid CONNECT tunnel
-      // that fails with ERR_HTTP2_ERROR, so pin the tunnel to HTTP/1.1.
+      // undici 8 offers h2 in ALPN by default. When the proxy URL is https the
+      // squid connection itself negotiates h2, and a CONNECT tunnel cannot be
+      // opened over an h2 session, so every egress call fails with
+      // ERR_HTTP2_ERROR. proxyTls covers the hop to squid, allowH2 the tunnel.
+      proxyTls: { allowH2: false },
       allowH2: false
     })
   )
 }
 
-module.exports = { proxyUrl: proxyUrl || null }
+module.exports = {
+  proxyUrl: proxyUrl || null,
+  // Scheme only: proxy URLs can carry credentials.
+  proxyScheme: proxyUrl ? new URL(proxyUrl).protocol.replace(':', '') : null
+}
