@@ -5,8 +5,7 @@
 //
 
 const { fetchHistory, SOS_BASE } = require('./sos-history')
-const { proxyUrl, proxyScheme } = require('./proxy')
-const { describeError } = require('./describe-error')
+const { proxyUrl } = require('./proxy')
 
 const BASE = process.env.AQIE_BACK_END_URL || 'http://localhost:3001'
 
@@ -27,8 +26,9 @@ async function fetchJson(path, timeoutMs) {
     }
     return await response.json()
   } catch (error) {
+    const cause = error.cause?.code ? ` (${error.cause.code})` : ''
     throw new Error(
-      `Could not reach the air quality service at ${url}: ${describeError(error)}`
+      `Could not reach the air quality service at ${url}: ${error.message}${cause}`
     )
   } finally {
     clearTimeout(timer)
@@ -98,7 +98,7 @@ async function probe(name, url) {
       name,
       url,
       ok: false,
-      detail: describeError(error)
+      detail: `${error.message}${error.cause?.code ? ` (${error.cause.code})` : ''}`
     }
   }
 }
@@ -115,7 +115,6 @@ async function checkConnectivity() {
     backEndUrl: BASE,
     // Value withheld: proxy URLs can carry credentials.
     proxyConfigured: Boolean(proxyUrl),
-    proxyScheme,
     checks
   }
 }

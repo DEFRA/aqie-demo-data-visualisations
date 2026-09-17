@@ -18,7 +18,16 @@ const SOS_BASE =
   process.env.SOS_URL ||
   'https://uk-air.defra.gov.uk/sos-ukair/service?service=AQD&version=1.0.0&request=GetObservation&temporalFilter=om:phenomenonTime,'
 
-const REQUEST_TIMEOUT_MS = 30000
+// A flat 30s per request was both too short and too rigid: the origin slows
+// down as the range grows (a year is ~8,760 hourly records per pollutant, and
+// on CDP every byte also crosses squid), and an abort was indistinguishable in
+// the logs from a refusal. The whole fetch instead shares one deadline, which
+// has to stay under CDP's 60s load-balancer timeout or the page is abandoned
+// anyway. SOS_TIMEOUT_MS tunes it from cdp-app-config without a code change.
+const TOTAL_BUDGET_MS = Number(process.env.SOS_TIMEOUT_MS) || 50000
+// Retrying is only worth starting if a realistic attempt still fits the budget.
+const MIN_RETRY_BUDGET_MS = 10000
+const HTTP_SERVER_ERROR = 500
 const MISSING_FOI = 'missingFOI'
 const DEFAULT_TOKEN_SEPARATOR = ','
 const DEFAULT_BLOCK_SEPARATOR = '@@'
@@ -171,27 +180,70 @@ function aggregateDaily(series) {
   return aggregated
 }
 
-async function fetchSeriesForFoi(foi, range, resolution) {
-  const url = `${SOS_BASE}${range}&featureOfInterest=${foi}`
+// Aborting without a reason surfaces as a bare "AbortError: This operation was
+// aborted", which reads like a cancelled request rather than an origin that ran
+// out of time. Passing the reason makes fetch reject with this instead.
+function timeoutError(foi, timeoutMs) {
+  const error = new Error(
+    `SOS did not respond within ${timeoutMs}ms for ${foi}`
+  )
+  error.name = 'TimeoutError'
+  return error
+}
+
+// A stalled or overloaded origin is worth one more go; a 4xx or a parse failure
+// will fail the same way twice.
+function isRetryable(error) {
+  return error?.name === 'TimeoutError' || error?.status >= HTTP_SERVER_ERROR
+}
+
+async function requestXml(url, foi, timeoutMs) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const timer = setTimeout(
+    () => controller.abort(timeoutError(foi, timeoutMs)),
+    timeoutMs
+  )
   try {
     const response = await fetch(url, {
       headers: { 'Cache-Control': 'no-cache' },
       signal: controller.signal
     })
     if (!response.ok) {
-      throw new Error(`SOS responded ${response.status} for ${foi}`)
+      const error = new Error(`SOS responded ${response.status} for ${foi}`)
+      error.status = response.status
+      throw error
     }
-    const dataArray = extractDataArray(parser.parse(await response.text()))
-    if (!dataArray) {
-      return []
-    }
-    const series = decodeSweValues(dataArray)
-    return resolution === 'daily' ? aggregateDaily(series) : series
+    return await response.text()
   } finally {
     clearTimeout(timer)
   }
+}
+
+async function fetchSeriesForFoi(foi, range, resolution, deadline) {
+  const url = `${SOS_BASE}${range}&featureOfInterest=${foi}`
+  let xml
+  for (;;) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) {
+      throw timeoutError(foi, TOTAL_BUDGET_MS)
+    }
+    try {
+      xml = await requestXml(url, foi, remaining)
+      break
+    } catch (error) {
+      if (!isRetryable(error) || deadline - Date.now() < MIN_RETRY_BUDGET_MS) {
+        throw error
+      }
+      console.warn(`SOS retry for ${foi}: ${describeError(error)}`)
+    }
+  }
+
+  const dataArray = extractDataArray(parser.parse(xml))
+  if (!dataArray) {
+    return []
+  }
+  const series = decodeSweValues(dataArray)
+  return resolution === 'daily' ? aggregateDaily(series) : series
 }
 
 // Fetches the series for each usable FOI in parallel; a single pollutant failure
@@ -202,16 +254,20 @@ async function fetchHistory(foisByCode, period) {
     ([, foi]) => foi && foi !== MISSING_FOI
   )
 
+  const deadline = Date.now() + TOTAL_BUDGET_MS
+
   const settled = await Promise.all(
     entries.map(async ([code, foi]) => {
+      const started = Date.now()
       try {
-        const series = await fetchSeriesForFoi(foi, range, resolution)
+        const series = await fetchSeriesForFoi(foi, range, resolution, deadline)
         return { code, series, ok: true }
       } catch (error) {
-        // Logged because a swallowed failure is indistinguishable from "no data"
-        // (on CDP the usual cause is squid blocking the SOS host).
+        // Logged because a swallowed failure is indistinguishable from "no data".
+        // The elapsed time separates the two CDP causes that otherwise look alike:
+        // squid blocking the host fails fast, a slow origin runs to the deadline.
         console.error(
-          `SOS history failed for ${code} (${foi}): ${describeError(error)}`
+          `SOS history failed for ${code} (${foi}) after ${Date.now() - started}ms: ${describeError(error)}`
         )
         return { code, series: [], ok: false }
       }
