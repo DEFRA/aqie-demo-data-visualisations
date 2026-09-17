@@ -263,7 +263,8 @@ The second acceptance criterion. Short answer: **feasible, with low–moderate b
    `curl http://localhost:3001/measurements`.
 2. In this repo: `npm install`, then `npm run dev` and open `http://localhost:3000`.
 3. Configuration: [.env](.env) sets `AQIE_BACK_END_URL=http://localhost:3001` (defaults to that if unset).
-   `SOS_URL` can override the SOS feed base if needed.
+   `SOS_URL` can override the SOS feed base if needed, and `SOS_TIMEOUT_MS` (default `50000`) the
+   budget for a station's whole history fetch.
 
 ### Running on CDP
 
@@ -297,6 +298,13 @@ outbound call fails with `fetch failed`:
   CDP services, this app fetches `uk-air.defra.gov.uk` server-side. If that host is not on the
   environment's egress allow-list every series comes back empty; the logged
   `SOS history failed …` lines confirm it.
+- **A slow origin looks different from a blocked one.** The SOS feed gets slower as the range grows
+  (a year is ~8,760 hourly records per pollutant) and on CDP every byte also crosses squid, so a
+  request can simply run out of time. The `SOS history failed …` line reports the elapsed time for
+  exactly this reason: a fast failure is squid or DNS, one that runs to the budget is the origin.
+  A timeout is retried once if enough budget remains, and reads `SOS did not respond within …`
+  rather than a bare `AbortError`. The budget is deliberately under CDP's 60s load-balancer timeout,
+  past which the page is abandoned regardless — raising `SOS_TIMEOUT_MS` above that will not help.
 
 ---
 

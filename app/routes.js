@@ -57,9 +57,15 @@ router.get('/station/:siteId', async (req, res, next) => {
         .render('station-not-found', { siteId: req.params.siteId })
     }
 
-    const history = await getHistory(req.params.siteId, period)
-    const history24 =
-      period === '24h' ? history : await getHistory(req.params.siteId, '24h')
+    // Concurrent, not sequential: two back-to-back SOS fetches would double the
+    // page's worst case and blow through CDP's 60s load-balancer timeout.
+    const historyRequest = getHistory(req.params.siteId, period)
+    const history24Request =
+      period === '24h' ? historyRequest : getHistory(req.params.siteId, '24h')
+    const [history, history24] = await Promise.all([
+      historyRequest,
+      history24Request
+    ])
     const pollutants = buildViewModel(history, history24)
 
     res.render('station', {
