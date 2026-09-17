@@ -5,13 +5,14 @@
 //
 
 const { fetchHistory, SOS_BASE } = require('./sos-history')
-const { proxyUrl } = require('./proxy')
+const { proxyUrl, probeProxyTunnels } = require('./proxy')
 
 const BASE = process.env.AQIE_BACK_END_URL || 'http://localhost:3001'
 
 const STATIONS_TIMEOUT_MS = 5000
 const MISSING_FOI = 'missingFOI'
 const PROBE_TIMEOUT_MS = 8000
+const HTTPS_PORT = 443
 
 async function fetchJson(path, timeoutMs) {
   const url = `${BASE}${path}`
@@ -104,18 +105,24 @@ async function probe(name, url) {
 }
 
 async function checkConnectivity() {
-  const sosHost = new URL(SOS_BASE).origin
-  const checks = await Promise.all([
-    probe('Air quality back end', `${BASE}/measurements`),
-    probe('DEFRA SOS feed', sosHost),
-    probe('Postcode lookup', 'https://api.postcodes.io/postcodes/SW1A1AA')
+  const sos = new URL(SOS_BASE)
+  const [checks, tunnels] = await Promise.all([
+    Promise.all([
+      probe('Air quality back end', `${BASE}/measurements`),
+      probe('DEFRA SOS feed', sos.origin),
+      probe('Postcode lookup', 'https://api.postcodes.io/postcodes/SW1A1AA')
+    ]),
+    // A reachable origin does not prove the tunnel the history fetch needs is
+    // open: squid can drop CONNECT silently, which looks like a slow origin.
+    probeProxyTunnels(`${sos.hostname}:${sos.port || HTTPS_PORT}`)
   ])
   return {
     ok: checks.every((check) => check.ok),
     backEndUrl: BASE,
     // Value withheld: proxy URLs can carry credentials.
     proxyConfigured: Boolean(proxyUrl),
-    checks
+    checks,
+    tunnels
   }
 }
 

@@ -182,10 +182,13 @@ function aggregateDaily(series) {
 
 // Aborting without a reason surfaces as a bare "AbortError: This operation was
 // aborted", which reads like a cancelled request rather than an origin that ran
-// out of time. Passing the reason makes fetch reject with this instead.
-function timeoutError(foi, timeoutMs) {
+// out of time. Passing the reason makes fetch reject with this instead. The
+// phase matters more than the elapsed time: a stall before any response header
+// is a tunnel or an origin that never answered, whereas headers followed by a
+// truncated body is simply too much XML to move inside the budget.
+function timeoutError(foi, timeoutMs, phase) {
   const error = new Error(
-    `SOS did not respond within ${timeoutMs}ms for ${foi}`
+    `SOS did not respond within ${timeoutMs}ms for ${foi} (${phase})`
   )
   error.name = 'TimeoutError'
   return error
@@ -199,15 +202,21 @@ function isRetryable(error) {
 
 async function requestXml(url, foi, timeoutMs) {
   const controller = new AbortController()
-  const timer = setTimeout(
-    () => controller.abort(timeoutError(foi, timeoutMs)),
-    timeoutMs
-  )
+  const started = Date.now()
+  let headersMs = null
+  const timer = setTimeout(() => {
+    const phase =
+      headersMs === null
+        ? 'no response headers'
+        : `headers after ${headersMs}ms, body unfinished`
+    controller.abort(timeoutError(foi, timeoutMs, phase))
+  }, timeoutMs)
   try {
     const response = await fetch(url, {
       headers: { 'Cache-Control': 'no-cache' },
       signal: controller.signal
     })
+    headersMs = Date.now() - started
     if (!response.ok) {
       const error = new Error(`SOS responded ${response.status} for ${foi}`)
       error.status = response.status
@@ -225,7 +234,7 @@ async function fetchSeriesForFoi(foi, range, resolution, deadline) {
   for (;;) {
     const remaining = deadline - Date.now()
     if (remaining <= 0) {
-      throw timeoutError(foi, TOTAL_BUDGET_MS)
+      throw timeoutError(foi, TOTAL_BUDGET_MS, 'budget already spent')
     }
     try {
       xml = await requestXml(url, foi, remaining)

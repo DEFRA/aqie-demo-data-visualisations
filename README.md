@@ -297,11 +297,19 @@ outbound call fails with `fetch failed`:
 - **The SOS host must be allowed through squid.** Unlike `aqie-maps-prototype`, which only calls other
   CDP services, this app fetches `uk-air.defra.gov.uk` server-side. If that host is not on the
   environment's egress allow-list every series comes back empty; the logged
-  `SOS history failed …` lines confirm it.
+  `SOS history failed …` lines confirm it. **A block is not always fast**: squid may deny the
+  `CONNECT` (quick failure) or silently drop it, which is indistinguishable from a slow origin until
+  you look at the tunnel. `Connection details` on the home page probes `CONNECT` directly for every
+  `*_PROXY` variable in the environment — `CONNECT 200` means the tunnel is fine and the origin is
+  genuinely slow, while a `403`/`3xx` block page or `no response within 8000ms` means the host needs
+  allow-listing. The postcode lookup is the cross-check: it uses the same proxy, so if it succeeds
+  while SOS times out, egress works and the problem is specific to `uk-air.defra.gov.uk`.
 - **A slow origin looks different from a blocked one.** The SOS feed gets slower as the range grows
   (a year is ~8,760 hourly records per pollutant) and on CDP every byte also crosses squid, so a
-  request can simply run out of time. The `SOS history failed …` line reports the elapsed time for
-  exactly this reason: a fast failure is squid or DNS, one that runs to the budget is the origin.
+  request can simply run out of time. The `SOS history failed …` line reports the elapsed time and
+  the phase it stalled in for exactly this reason: `no response headers` after the full budget is a
+  tunnel or an origin that never answered, whereas `headers after Xms, body unfinished` is too much
+  XML to move in time — the one case where raising the budget or shortening the range helps.
   A timeout is retried once if enough budget remains, and reads `SOS did not respond within …`
   rather than a bare `AbortError`. The budget is deliberately under CDP's 60s load-balancer timeout,
   past which the page is abandoned regardless — raising `SOS_TIMEOUT_MS` above that will not help.
