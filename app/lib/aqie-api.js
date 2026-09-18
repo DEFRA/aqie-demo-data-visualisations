@@ -4,7 +4,7 @@
 // controlled. Base URL comes from AQIE_BACK_END_URL.
 //
 
-const { fetchHistory, SOS_BASE } = require('./sos-history')
+const { fetchHistory, diagnoseFoi, SOS_BASE } = require('./sos-history')
 const { proxyUrl, probeProxyTunnels } = require('./proxy')
 
 const BASE = process.env.AQIE_BACK_END_URL || 'http://localhost:3001'
@@ -83,7 +83,7 @@ async function getHistory(siteId, period = '24h') {
 
 // The .cdp-int hosts are unreachable from a laptop, so connectivity can only be
 // proven from inside the running container.
-async function probe(name, url) {
+async function probe(name, url, { anyStatus = false } = {}) {
   try {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
@@ -91,7 +91,7 @@ async function probe(name, url) {
     return {
       name,
       url,
-      ok: response.ok,
+      ok: anyStatus || response.ok,
       detail: `HTTP ${response.status}`
     }
   } catch (error) {
@@ -109,7 +109,12 @@ async function checkConnectivity() {
   const [checks, tunnels] = await Promise.all([
     Promise.all([
       probe('Air quality back end', `${BASE}/measurements`),
-      probe('DEFRA SOS feed', sos.origin),
+      // The site root is CDN-fronted, so it can answer while the servlet behind
+      // it does not. Any status proves the servlet replied: with no parameters
+      // it returns an exception report, which is still an answer.
+      probe('DEFRA SOS service', `${sos.origin}${sos.pathname}`, {
+        anyStatus: true
+      }),
       probe('Postcode lookup', 'https://api.postcodes.io/postcodes/SW1A1AA')
     ]),
     // A reachable origin does not prove the tunnel the history fetch needs is
@@ -126,11 +131,66 @@ async function checkConnectivity() {
   }
 }
 
+function firstUsableFoi(station) {
+  for (const [code, details] of Object.entries(station?.pollutants || {})) {
+    const foi = details?.featureOfInterest
+    if (foi && foi !== MISSING_FOI) {
+      return { code, foi }
+    }
+  }
+  return null
+}
+
+// One real SOS request plus the tunnel behind it, reported over HTTP because the
+// CDP Portal terminal is not available for every service. The station id is only
+// matched against the back-end's own records and the FOI comes from those
+// records, so nothing here lets a caller choose the outbound host.
+async function diagnoseSos(siteId) {
+  const sos = new URL(SOS_BASE)
+  const target = `${sos.hostname}:${sos.port || HTTPS_PORT}`
+  const stations = await getStations()
+  const candidates = siteId
+    ? stations.filter((station) => station.localSiteID === siteId)
+    : stations
+
+  let found = null
+  for (const station of candidates) {
+    const usable = firstUsableFoi(station)
+    if (usable) {
+      found = { station: station.localSiteID, ...usable }
+      break
+    }
+  }
+  if (!found) {
+    return {
+      target,
+      error: siteId
+        ? `No usable featureOfInterest for ${siteId}`
+        : 'No station in /measurements has a usable featureOfInterest'
+    }
+  }
+
+  const [tunnels, request] = await Promise.all([
+    probeProxyTunnels(target),
+    diagnoseFoi(found.foi)
+  ])
+  return {
+    target,
+    // Value withheld: proxy URLs can carry credentials.
+    proxyConfigured: Boolean(proxyUrl),
+    station: found.station,
+    pollutant: found.code,
+    tunnels,
+    request
+  }
+}
+
 module.exports = {
   getStations,
   getStationById,
   getLatest,
   getHistory,
   checkConnectivity,
+  diagnoseSos,
   BASE
 }

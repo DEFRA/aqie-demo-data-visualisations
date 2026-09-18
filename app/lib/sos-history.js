@@ -13,6 +13,7 @@
 
 const { XMLParser } = require('fast-xml-parser')
 const { describeError } = require('./describe-error')
+const { probeProxyTunnels } = require('./proxy')
 
 const SOS_BASE =
   process.env.SOS_URL ||
@@ -28,6 +29,13 @@ const TOTAL_BUDGET_MS = Number(process.env.SOS_TIMEOUT_MS) || 50000
 // Retrying is only worth starting if a realistic attempt still fits the budget.
 const MIN_RETRY_BUDGET_MS = 10000
 const HTTP_SERVER_ERROR = 500
+const HTTPS_PORT = 443
+const STALL_BEFORE_HEADERS = 'no response headers'
+const TUNNEL_REPORT_INTERVAL_MS = 60000
+// Short enough that the diagnostic page always returns inside CDP's 60s limit,
+// even when the tunnel probe runs alongside it.
+const DIAGNOSTIC_TIMEOUT_MS = 25000
+const DIAGNOSTIC_SAMPLE_CHARS = 300
 const MISSING_FOI = 'missingFOI'
 const DEFAULT_TOKEN_SEPARATOR = ','
 const DEFAULT_BLOCK_SEPARATOR = '@@'
@@ -191,7 +199,40 @@ function timeoutError(foi, timeoutMs, phase) {
     `SOS did not respond within ${timeoutMs}ms for ${foi} (${phase})`
   )
   error.name = 'TimeoutError'
+  error.phase = phase
   return error
+}
+
+let lastTunnelReport = 0
+
+// Nothing arriving at all is either squid dropping the CONNECT or an origin that
+// never answered, and only a direct CONNECT separates them. Detached and
+// throttled on purpose: the fetch has already spent its budget, so awaiting this
+// would push the page past CDP's 60s limit, and every pollutant fails together.
+function reportTunnel() {
+  if (Date.now() - lastTunnelReport < TUNNEL_REPORT_INTERVAL_MS) {
+    return
+  }
+  lastTunnelReport = Date.now()
+  const sos = new URL(SOS_BASE)
+  const target = `${sos.hostname}:${sos.port || HTTPS_PORT}`
+  probeProxyTunnels(target)
+    .then((results) => {
+      if (results.length === 0) {
+        console.error(
+          `SOS tunnel check ${target}: no proxy configured, so egress is direct`
+        )
+        return
+      }
+      for (const { name, proxy, ok, detail } of results) {
+        console.error(
+          `SOS tunnel check ${target} via ${name} (${proxy}): ${ok ? 'open' : 'FAILED'} - ${detail}`
+        )
+      }
+    })
+    .catch((error) =>
+      console.error(`SOS tunnel check failed: ${describeError(error)}`)
+    )
 }
 
 // A stalled or overloaded origin is worth one more go; a 4xx or a parse failure
@@ -207,7 +248,7 @@ async function requestXml(url, foi, timeoutMs) {
   const timer = setTimeout(() => {
     const phase =
       headersMs === null
-        ? 'no response headers'
+        ? STALL_BEFORE_HEADERS
         : `headers after ${headersMs}ms, body unfinished`
     controller.abort(timeoutError(foi, timeoutMs, phase))
   }, timeoutMs)
@@ -278,6 +319,9 @@ async function fetchHistory(foisByCode, period) {
         console.error(
           `SOS history failed for ${code} (${foi}) after ${Date.now() - started}ms: ${describeError(error)}`
         )
+        if (error.phase === STALL_BEFORE_HEADERS) {
+          reportTunnel()
+        }
         return { code, series: [], ok: false }
       }
     })
@@ -294,8 +338,37 @@ async function fetchHistory(foisByCode, period) {
   return { pollutants, resolution, attempted: entries.length, failures }
 }
 
+// The in-container equivalent of curling the feed by hand, for services where
+// the CDP Portal terminal is unavailable. Reports what came back rather than
+// just whether it worked, so a stall can be told apart from an empty reply.
+async function diagnoseFoi(foi, period = DEFAULT_PERIOD) {
+  const { range } = buildRange(period)
+  const url = `${SOS_BASE}${range}&featureOfInterest=${foi}`
+  const started = Date.now()
+  try {
+    const xml = await requestXml(url, foi, DIAGNOSTIC_TIMEOUT_MS)
+    const dataArray = extractDataArray(parser.parse(xml))
+    return {
+      ok: true,
+      url,
+      ms: Date.now() - started,
+      bytes: Buffer.byteLength(xml),
+      points: dataArray ? decodeSweValues(dataArray).length : 0,
+      sample: xml.slice(0, DIAGNOSTIC_SAMPLE_CHARS)
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      url,
+      ms: Date.now() - started,
+      error: describeError(error)
+    }
+  }
+}
+
 module.exports = {
   fetchHistory,
+  diagnoseFoi,
   buildRange,
   decodeSweValues,
   aggregateDaily,
