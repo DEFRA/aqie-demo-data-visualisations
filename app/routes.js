@@ -13,7 +13,8 @@ const {
   getStations,
   getStationById,
   getHistory,
-  checkConnectivity
+  checkConnectivity,
+  diagnoseSos
 } = require('./lib/aqie-api')
 const { findStations } = require('./lib/search')
 const { buildViewModel } = require('./lib/station-view')
@@ -29,6 +30,15 @@ function pick(value, allowed, fallback) {
 router.get('/', async (req, res, next) => {
   try {
     res.render('index', { connectivity: await checkConnectivity() })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// Stands in for the CDP Portal terminal, which this service does not have.
+router.get('/debug/sos', async (req, res, next) => {
+  try {
+    res.json(await diagnoseSos(req.query.siteId))
   } catch (error) {
     next(error)
   }

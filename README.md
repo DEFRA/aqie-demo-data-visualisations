@@ -280,9 +280,15 @@ outbound call fails with `fetch failed`:
   and gets a connection failure on the station search.
 - **`.cdp-int.defra.cloud` hosts are internal.** They cannot be curled from a laptop without the
   Defra VPN — an SSL/connection error from your own machine says nothing about the deployed app.
-  Check from inside the container instead: `GET /debug/connectivity` reports the resolved back-end
-  URL, whether a proxy is configured, and the status of `/health`, `/measurements` and the SOS host.
-  The CDP Portal terminal (dev/test environments) is the other option — the image ships `curl`.
+  Check from inside the container instead. **The CDP Portal terminal is not available for this
+  service**, so the checks are reachable over HTTP rather than a shell: the home page reports the
+  back-end URL, whether a proxy is configured and the status of each data source, and
+  `GET /debug/sos` performs one real SOS request and returns the outcome as JSON — the `CONNECT`
+  status of every proxy in the environment, the exact URL called, time taken, bytes received,
+  points decoded and the first 300 characters of the XML, or the error and the phase it failed in.
+  It takes the station and `featureOfInterest` from the back-end's own `/measurements` records
+  (`?siteId=` only selects among them), so a caller cannot steer the outbound request at another
+  host.
 - **Outbound internet goes through the CDP squid proxy.** Node's global `fetch` ignores the standard
   `*_PROXY` environment variables, so [app/lib/proxy.js](app/lib/proxy.js) installs an `undici`
   `EnvHttpProxyAgent` as the global dispatcher when `CDP_HTTPS_PROXY` (or `HTTPS_PROXY`/`HTTP_PROXY`)
@@ -299,11 +305,15 @@ outbound call fails with `fetch failed`:
   environment's egress allow-list every series comes back empty; the logged
   `SOS history failed …` lines confirm it. **A block is not always fast**: squid may deny the
   `CONNECT` (quick failure) or silently drop it, which is indistinguishable from a slow origin until
-  you look at the tunnel. `Connection details` on the home page probes `CONNECT` directly for every
-  `*_PROXY` variable in the environment — `CONNECT 200` means the tunnel is fine and the origin is
-  genuinely slow, while a `403`/`3xx` block page or `no response within 8000ms` means the host needs
-  allow-listing. The postcode lookup is the cross-check: it uses the same proxy, so if it succeeds
-  while SOS times out, egress works and the problem is specific to `uk-air.defra.gov.uk`.
+  you look at the tunnel. A `CONNECT` is therefore probed directly for every `*_PROXY` variable in
+  the environment — on demand under `Connection details` on the home page, and automatically
+  (detached and throttled) whenever a fetch stalls before any response header, logged as
+  `SOS tunnel check …`. `CONNECT 200` means the tunnel is fine and the origin is genuinely slow,
+  while a `403`/`3xx` block page or `no response within 8000ms` means the host needs allow-listing.
+  The postcode lookup is the cross-check: it uses the same proxy, so if it succeeds while SOS times
+  out, egress works and the problem is specific to `uk-air.defra.gov.uk`. Note that the SOS check
+  targets the **service path**, not the site root — the root is CDN-fronted and can answer happily
+  while the servlet behind it does not.
 - **A slow origin looks different from a blocked one.** The SOS feed gets slower as the range grows
   (a year is ~8,760 hourly records per pollutant) and on CDP every byte also crosses squid, so a
   request can simply run out of time. The `SOS history failed …` line reports the elapsed time and
