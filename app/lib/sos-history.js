@@ -272,7 +272,7 @@ async function requestXml(url, foi, timeoutMs) {
 async function fetchSeriesForFoi(foi, range, resolution, deadline) {
   const url = `${SOS_BASE}${range}&featureOfInterest=${foi}`
   let xml
-  for (;;) {
+  for (; ;) {
     const remaining = deadline - Date.now()
     if (remaining <= 0) {
       throw timeoutError(foi, TOTAL_BUDGET_MS, 'budget already spent')

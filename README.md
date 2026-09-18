@@ -291,15 +291,23 @@ outbound call fails with `fetch failed`:
   host.
 - **Outbound internet goes through the CDP squid proxy.** Node's global `fetch` ignores the standard
   `*_PROXY` environment variables, so [app/lib/proxy.js](app/lib/proxy.js) installs an `undici`
-  `EnvHttpProxyAgent` as the global dispatcher when `CDP_HTTPS_PROXY` (or `HTTPS_PROXY`/`HTTP_PROXY`)
-  is present. This is what allows the public DEFRA SOS feed to be reached from a deployed container.
-  Internal hosts (`NO_PROXY`, `localhost`, `.cdp-int.defra.cloud` and the host from
-  `AQIE_BACK_END_URL`) bypass the proxy, so the back-end call is made directly. The agent also sets
-  `proxyTls: { allowH2: false }`: `CDP_HTTPS_PROXY` is an `https://` URL, and `undici` 8 offers `h2`
-  in ALPN by default, so the connection to squid itself negotiates HTTP/2 — a `CONNECT` tunnel cannot
-  be opened over an h2 session, and every egress call fails with `fetch failed (ERR_HTTP2_ERROR)`.
-  Note that a top-level `allowH2` does _not_ cover this: `ProxyAgent` builds the proxy-side connector
-  from `proxyTls` alone.
+  `EnvHttpProxyAgent` as the global dispatcher when a proxy variable is present. This is what allows
+  the public DEFRA SOS feed to be reached from a deployed container. Internal hosts (`NO_PROXY`,
+  `localhost`, `.cdp-int.defra.cloud` and the host from `AQIE_BACK_END_URL`) bypass the proxy, so the
+  back-end call is made directly.
+- **Which proxy variable is used matters.** `HTTPS_PROXY`/`HTTP_PROXY` are `http://localhost:3128`,
+  the squid sidecar every CDP container runs, and **that sidecar is what enforces this service's
+  `cdp-tenant-config` allow-list**. `CDP_HTTPS_PROXY` is the legacy central proxy
+  (`https://proxy.<env>.cdp-int.defra.cloud`); CDP still injects it and still supports it, but it
+  does not honour the same allow-list. Preferring it black-holes allowed hosts _silently_ — the
+  `CONNECT` never gets a reply, so it reads as a slow origin rather than a block, while unrelated
+  hosts keep working. `proxy.js` therefore prefers `HTTPS_PROXY` → `HTTP_PROXY` →
+  `CDP_HTTPS_PROXY` → `CDP_HTTP_PROXY`, matching the CDP guidance that `HTTPS_PROXY` "should be
+  preferred when updating existing" services. The agent also sets `proxyTls: { allowH2: false }` for
+  the legacy fallback, which is an `https://` URL: `undici` 8 offers `h2` in ALPN by default, so the
+  connection to squid itself negotiates HTTP/2 — a `CONNECT` tunnel cannot be opened over an h2
+  session, and every egress call fails with `fetch failed (ERR_HTTP2_ERROR)`. Note that a top-level
+  `allowH2` does _not_ cover this: `ProxyAgent` builds the proxy-side connector from `proxyTls` alone.
 - **The SOS host must be allowed through squid.** Unlike `aqie-maps-prototype`, which only calls other
   CDP services, this app fetches `uk-air.defra.gov.uk` server-side. If that host is not on the
   environment's egress allow-list every series comes back empty; the logged

@@ -9,21 +9,26 @@ const http = require('node:http')
 const https = require('node:https')
 const { describeError } = require('./describe-error')
 
+// HTTP_PROXY/HTTPS_PROXY point at the squid sidecar on localhost:3128 that every
+// CDP container runs, and that sidecar is what enforces this service's
+// cdp-tenant-config allow-list. CDP_HTTPS_PROXY is the legacy central proxy,
+// kept only as a fallback: it is still injected, but it does not honour the same
+// allow-list, so preferring it silently black-holes allowed hosts.
 const PROXY_ENV_VARS = [
-  'CDP_HTTPS_PROXY',
-  'CDP_HTTP_PROXY',
   'HTTPS_PROXY',
-  'HTTP_PROXY'
+  'HTTP_PROXY',
+  'CDP_HTTPS_PROXY',
+  'CDP_HTTP_PROXY'
 ]
 const TUNNEL_PROBE_TIMEOUT_MS = 8000
 const HTTP_OK = 200
 const DEFAULT_PORTS = { 'https:': 443, 'http:': 80 }
 
 const proxyUrl =
-  process.env.CDP_HTTPS_PROXY ||
-  process.env.CDP_HTTP_PROXY ||
   process.env.HTTPS_PROXY ||
-  process.env.HTTP_PROXY
+  process.env.HTTP_PROXY ||
+  process.env.CDP_HTTPS_PROXY ||
+  process.env.CDP_HTTP_PROXY
 
 // On CDP the back-end is reached by bare service name (http://aqie-back-end),
 // which no suffix rule below would match, so add its host explicitly.
@@ -88,6 +93,10 @@ function probeTunnel(name, rawUrl, target) {
       method: 'CONNECT',
       path: target,
       headers: { host: target },
+      // Node derives the TLS servername from the Host header, which for CONNECT
+      // is the tunnel target. Without this the proxy's certificate is checked
+      // against the target's name and a working proxy reports ALTNAME_INVALID.
+      servername: url.hostname,
       timeout: TUNNEL_PROBE_TIMEOUT_MS,
       // The hop to squid is plain HTTP over TLS; ALPN h2 breaks CONNECT.
       ALPNProtocols: ['http/1.1']
@@ -95,7 +104,10 @@ function probeTunnel(name, rawUrl, target) {
 
     request.on('connect', (response, socket) => {
       socket.destroy()
-      done({ ok: response.statusCode === HTTP_OK, detail: `CONNECT ${response.statusCode}` })
+      done({
+        ok: response.statusCode === HTTP_OK,
+        detail: `CONNECT ${response.statusCode}`
+      })
     })
     // Any non-2xx to a CONNECT arrives as a normal response.
     request.on('response', (response) => {
@@ -108,9 +120,14 @@ function probeTunnel(name, rawUrl, target) {
     })
     request.on('timeout', () => {
       request.destroy()
-      done({ ok: false, detail: `no response within ${TUNNEL_PROBE_TIMEOUT_MS}ms` })
+      done({
+        ok: false,
+        detail: `no response within ${TUNNEL_PROBE_TIMEOUT_MS}ms`
+      })
     })
-    request.on('error', (error) => done({ ok: false, detail: describeError(error) }))
+    request.on('error', (error) =>
+      done({ ok: false, detail: describeError(error) })
+    )
     request.end()
   })
 }
