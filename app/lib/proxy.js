@@ -24,11 +24,18 @@ const TUNNEL_PROBE_TIMEOUT_MS = 8000
 const HTTP_OK = 200
 const DEFAULT_PORTS = { 'https:': 443, 'http:': 80 }
 
-const proxyUrl =
-  process.env.HTTPS_PROXY ||
-  process.env.HTTP_PROXY ||
-  process.env.CDP_HTTPS_PROXY ||
-  process.env.CDP_HTTP_PROXY
+const proxySource = PROXY_ENV_VARS.find((name) => process.env[name]) || null
+const proxyUrl = proxySource ? process.env[proxySource] : null
+
+function parseProxy(raw) {
+  try {
+    return new URL(raw)
+  } catch {
+    return null
+  }
+}
+
+const parsedProxy = proxyUrl ? parseProxy(proxyUrl) : null
 
 // On CDP the back-end is reached by bare service name (http://aqie-back-end),
 // which no suffix rule below would match, so add its host explicitly.
@@ -149,7 +156,10 @@ async function probeProxyTunnels(target) {
 
 module.exports = {
   proxyUrl: proxyUrl || null,
-  // Scheme only: proxy URLs can carry credentials.
-  proxyScheme: proxyUrl ? new URL(proxyUrl).protocol.replace(':', '') : null,
+  // Name of the variable that won, so the logs show which proxy is really in use.
+  proxySource,
+  // Scheme/host/port only: proxy URLs can carry credentials.
+  proxyRedacted: parsedProxy ? redact(parsedProxy) : null,
+  proxyScheme: parsedProxy ? parsedProxy.protocol.replace(':', '') : null,
   probeProxyTunnels
 }

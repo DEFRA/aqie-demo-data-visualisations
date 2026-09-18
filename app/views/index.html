@@ -35,7 +35,8 @@
         </ul>
         <p class="govuk-body">
           Back end: <code>{{ connectivity.backEndUrl }}</code>.
-          Outbound proxy: {{ "configured" if connectivity.proxyConfigured else "not set" }}.
+          Outbound proxy: {% if connectivity.proxyConfigured %}<code>{{ connectivity.proxy }}</code>
+          (from {{ connectivity.proxySource }}){% else %}not set{% endif %}.
         </p>
       </div>
     </div>

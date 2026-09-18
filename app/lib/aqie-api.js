@@ -5,7 +5,12 @@
 //
 
 const { fetchHistory, diagnoseFoi, SOS_BASE } = require('./sos-history')
-const { proxyUrl, probeProxyTunnels } = require('./proxy')
+const {
+  proxyUrl,
+  proxySource,
+  proxyRedacted,
+  probeProxyTunnels
+} = require('./proxy')
 
 const BASE = process.env.AQIE_BACK_END_URL || 'http://localhost:3001'
 
@@ -126,6 +131,8 @@ async function checkConnectivity() {
     backEndUrl: BASE,
     // Value withheld: proxy URLs can carry credentials.
     proxyConfigured: Boolean(proxyUrl),
+    proxySource,
+    proxy: proxyRedacted,
     checks,
     tunnels
   }
@@ -170,17 +177,32 @@ async function diagnoseSos(siteId) {
     }
   }
 
-  const [tunnels, request] = await Promise.all([
+  const [tunnels, steps, request] = await Promise.all([
     probeProxyTunnels(target),
+    // A ladder, so a failure says where it breaks: the control proves HTTPS
+    // through the proxy works at all, the root proves the host answers, and the
+    // service path proves the servlet behind it does.
+    Promise.all([
+      probe(
+        'Control (postcodes.io)',
+        'https://api.postcodes.io/postcodes/SW1A1AA'
+      ),
+      probe('SOS site root', `${sos.origin}/`, { anyStatus: true }),
+      probe('SOS service path', `${sos.origin}${sos.pathname}`, {
+        anyStatus: true
+      })
+    ]),
     diagnoseFoi(found.foi)
   ])
   return {
     target,
     // Value withheld: proxy URLs can carry credentials.
-    proxyConfigured: Boolean(proxyUrl),
+    proxySource,
+    proxy: proxyRedacted,
     station: found.station,
     pollutant: found.code,
     tunnels,
+    steps,
     request
   }
 }
