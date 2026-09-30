@@ -95,18 +95,17 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRadians(lat1)) *
-    Math.cos(toRadians(lat2)) *
-    Math.sin(dLng / 2) ** 2
+      Math.cos(toRadians(lat2)) *
+      Math.sin(dLng / 2) ** 2
   return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-// Back-end stores coordinates as [lat, lng] (latitude first).
 function stationLatLng(station) {
-  const coordinates = station.location?.coordinates
-  if (!Array.isArray(coordinates) || coordinates.length < 2) {
+  const { latitude, longitude } = station
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') {
     return null
   }
-  return { lat: coordinates[0], lng: coordinates[1] }
+  return { lat: latitude, lng: longitude }
 }
 
 function nearest(stations, lat, lng, limit) {

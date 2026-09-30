@@ -1,18 +1,15 @@
 //
-// Pollutant reference data: canonical codes, aliases for the raw back-end keys,
-// display names, and non-colour-only chart encodings (colour + line style).
+// Pollutant reference data: canonical codes, display names, and non-colour-only
+// chart encodings (colour + line style).
 //
 
 const CANONICAL = ['PM25', 'PM10', 'NO2', 'O3', 'SO2']
 
-// The back-end stores measurements under raw parameter_ids (e.g. GE10, GR25).
-// Map each to the canonical pollutant it represents.
+// The Ricardo client maps each pollutant onto these codes before the series
+// reaches the view model, so the alias table is an identity map.
 const ALIAS = {
-  GE10: 'PM10',
-  GR10: 'PM10',
   PM10: 'PM10',
   PM25: 'PM25',
-  GR25: 'PM25',
   NO2: 'NO2',
   O3: 'O3',
   SO2: 'SO2'

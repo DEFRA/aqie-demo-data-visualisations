@@ -37,21 +37,11 @@ function parseProxy(raw) {
 
 const parsedProxy = proxyUrl ? parseProxy(proxyUrl) : null
 
-// On CDP the back-end is reached by bare service name (http://aqie-back-end),
-// which no suffix rule below would match, so add its host explicitly.
-function backEndHost() {
-  try {
-    return new URL(process.env.AQIE_BACK_END_URL).hostname
-  } catch {
-    return null
-  }
-}
-
-// Internal traffic (the back-end) must bypass squid, which only brokers egress.
+// Internal traffic must bypass squid, which only brokers egress. Every data
+// call now leaves the platform, so only the platform's own hosts belong here.
 const noProxy = [
   process.env.NO_PROXY,
-  'localhost,127.0.0.1,.cdp-int.defra.cloud',
-  backEndHost()
+  'localhost,127.0.0.1,.cdp-int.defra.cloud'
 ]
   .filter(Boolean)
   .join(',')

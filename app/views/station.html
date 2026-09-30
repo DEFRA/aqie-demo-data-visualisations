@@ -8,9 +8,7 @@
 
 {% set periods = [
 { key: "24h", label: "Last 24 hours" },
-{ key: "7d", label: "Last 7 days" },
-{ key: "month", label: "Last month" },
-{ key: "year", label: "Last year" }
+{ key: "7d", label: "Last 7 days" }
 ] %}
 
 {% block beforeContent %}
@@ -44,41 +42,51 @@
     text: "Data has not been checked and verified."
     }) }}
 
+    {% if window.from %}
+    <p class="govuk-body-s govuk-hint">
+      Showing readings from {{ window.from | readingTime }} to {{ window.to | readingTime }} (UTC).
+      The most recent hour or two may not have been published yet.
+    </p>
+    {% endif %}
+
     {% if pollutants.length %}
 
     {% set summaryRows = [] %}
     {% for p in pollutants %}
     {% set nameCell %}<span class="govuk-!-font-weight-bold">{{ p.name }}</span><span
       class="govuk-body-s govuk-!-display-block">Data capture: {{ p.dataCapturePct }}%</span>{% endset %}
-    {% set averageCell %}{% if p.average24h != null %}{{ p.average24h }} {{ p.unit }}{% else %}No data{% endif %}{%
+    {% set averageCell %}{% if p.average != null %}{{ p.average }} {{ p.unit }}{% else %}No data{% endif %}{%
     endset %}
     {% set exceedanceCell %}{% if p.limit == null %}No legal limit{% else %}{{ p.exceedances }}{% endif %}{% endset %}
     {% set _ = summaryRows.push([{ html: nameCell }, { text: averageCell }, { html: exceedanceCell }]) %}
     {% endfor %}
 
     {{ govukTable({
-    caption: "Pollutant summary for the last 24 hours",
+    caption: "Pollutant summary for " + (window.from | readingTime) + " to " + (window.to | readingTime),
     captionClasses: "govuk-table__caption--m",
     head: [
     { text: "Pollutant" },
-    { text: "24 hour average" },
+    { text: "Average" },
     { text: "Hourly exceedances" }
     ],
     rows: summaryRows
     }) }}
 
     {% set aboutHtml %}
-    <p class="govuk-body">Figures are derived from the hourly readings shown below.</p>
+    <p class="govuk-body">Figures are derived from the same readings shown below, so the table and the charts always
+      cover the same period.</p>
     <ul class="govuk-list govuk-list--bullet">
-      <li><strong>24 hour average</strong> &mdash; the mean of the valid hourly readings in the last 24 hours.</li>
-      <li><strong>Data capture</strong> &mdash; the percentage of the 24 expected hourly readings that were valid.</li>
+      <li><strong>Average</strong> &mdash; the mean of the valid readings between
+        {{ window.from | readingTime }} and {{ window.to | readingTime }}.</li>
+      <li><strong>Data capture</strong> &mdash; the percentage of the expected readings that were valid.</li>
       <li><strong>Hourly exceedances</strong> &mdash; how many hours exceeded the legal hourly limit, where one exists
         (nitrogen dioxide 200 µg/m³, sulphur dioxide 350 µg/m³).</li>
     </ul>
     {% endset %}
     {{ govukDetails({ summaryText: "About these figures", html: aboutHtml }) }}
 
-    <h2 class="govuk-heading-l govuk-!-margin-top-6">Hourly readings</h2>
+    <h2 class="govuk-heading-l govuk-!-margin-top-6">{{ "Daily averages" if resolution == "daily" else "Hourly readings"
+      }}</h2>
 
     <div class="app-chart-switcher">
       <span class="app-chart-switcher__label">Chart view:</span>
@@ -114,11 +122,12 @@
     {% for p in pollutants %}
     {% set seriesRows = [] %}
     {% for point in p.series %}
-    {% set _ = seriesRows.push([{ text: point.time }, { text: point.value }]) %}
+    {% set readingCell %}{% if point.value != null %}{{ point.value }}{% else %}No data{% endif %}{% endset %}
+    {% set _ = seriesRows.push([{ text: point.time | readingTime }, { text: readingCell }]) %}
     {% endfor %}
     {% set seriesTable %}{{ govukTable({
     head: [
-    { text: "Date (Europe/London)" if resolution == "daily" else "Time (UTC)" },
+    { text: "Date" if resolution == "daily" else "Time (UTC)" },
     { text: "Reading (" + p.unit + ")" }
     ],
     rows: seriesRows

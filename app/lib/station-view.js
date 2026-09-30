@@ -1,7 +1,7 @@
 //
 // Builds the per-pollutant view model for the station page: canonicalises the
 // raw back-end codes, orders them, attaches the chart series, and derives the
-// summary metrics from the 24-hour series so the table and charts always agree.
+// summary metrics from that same series so the table and charts always agree.
 //
 
 const {
@@ -34,9 +34,9 @@ function indexByCanonical(pollutants) {
   return byCanonical
 }
 
-function buildViewModel(history, history24) {
+function buildViewModel(history) {
   const seriesByCanonical = indexByCanonical(history.pollutants)
-  const series24ByCanonical = indexByCanonical(history24.pollutants)
+  const window = { from: history.from, to: history.to }
 
   return CANONICAL.filter((code) => seriesByCanonical[code]).map((code) => ({
     code,
@@ -45,7 +45,7 @@ function buildViewModel(history, history24) {
     colour: COLOUR[code],
     line: LINE[code],
     series: seriesByCanonical[code] || [],
-    ...computeSummary(series24ByCanonical[code] || [], code)
+    ...computeSummary(seriesByCanonical[code] || [], code, window)
   }))
 }
 

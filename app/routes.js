@@ -13,13 +13,12 @@ const {
   getStations,
   getStationById,
   getHistory,
-  checkConnectivity,
-  diagnoseSos
-} = require('./lib/aqie-api')
+  checkConnectivity
+} = require('./lib/ricardo-api')
 const { findStations } = require('./lib/search')
 const { buildViewModel } = require('./lib/station-view')
 
-const PERIODS = ['24h', '7d', 'month', 'year']
+const PERIODS = ['24h', '7d']
 const LAYOUTS = ['small-multiples', 'combined']
 const NOT_FOUND = 404
 
@@ -35,14 +34,6 @@ router.get('/', async (req, res, next) => {
   }
 })
 
-// Stands in for the CDP Portal terminal, which this service does not have.
-router.get('/debug/sos', async (req, res, next) => {
-  try {
-    res.json(await diagnoseSos(req.query.siteId))
-  } catch (error) {
-    next(error)
-  }
-})
 router.get('/stations', async (req, res, next) => {
   try {
     const q = (req.query.q || '').trim()
@@ -67,16 +58,8 @@ router.get('/station/:siteId', async (req, res, next) => {
         .render('station-not-found', { siteId: req.params.siteId })
     }
 
-    // Concurrent, not sequential: two back-to-back SOS fetches would double the
-    // page's worst case and blow through CDP's 60s load-balancer timeout.
-    const historyRequest = getHistory(req.params.siteId, period)
-    const history24Request =
-      period === '24h' ? historyRequest : getHistory(req.params.siteId, '24h')
-    const [history, history24] = await Promise.all([
-      historyRequest,
-      history24Request
-    ])
-    const pollutants = buildViewModel(history, history24)
+    const history = await getHistory(req.params.siteId, period)
+    const pollutants = buildViewModel(history)
 
     res.render('station', {
       station,
@@ -84,6 +67,7 @@ router.get('/station/:siteId', async (req, res, next) => {
       layout,
       pollutants,
       resolution: history.resolution,
+      window: { from: history.from, to: history.to },
       chartData: JSON.stringify({
         pollutants,
         period,
