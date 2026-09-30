@@ -123,7 +123,7 @@ async function login() {
     // `node --env-file` and truncated, which surfaces here as bad credentials.
     throw new Error(
       `Ricardo API login failed (HTTP ${response.status}): ${body?.message || 'no token returned'}. ` +
-        'If the password ends with "#", quote it in .env.'
+      'If the password ends with "#", quote it in .env.'
     )
   }
   return body.token
