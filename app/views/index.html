@@ -34,7 +34,7 @@
           {% endfor %}
         </ul>
         <p class="govuk-body">
-          Back end: <code>{{ connectivity.backEndUrl }}</code>.
+          Data source: <code>{{ connectivity.apiUrl }}</code>.
           Outbound proxy: {% if connectivity.proxyConfigured %}<code>{{ connectivity.proxy }}</code>
           (from {{ connectivity.proxySource }}){% else %}not set{% endif %}.
         </p>
@@ -64,8 +64,8 @@
     <h1 class="govuk-heading-xl">Get air pollution data</h1>
 
     <p class="govuk-body-l">
-      Find a monitoring station and view the last 24 hours of hourly pollutant
-      readings.
+      Find a monitoring station and view up to the last 7 days of hourly
+      pollutant readings.
     </p>
 
     <form method="get" action="/stations" novalidate>

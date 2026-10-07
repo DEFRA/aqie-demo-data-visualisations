@@ -15,7 +15,7 @@ the [GOV.UK Frontend](https://github.com/alphagov/govuk-frontend).
   - [Search](#search)
   - [Cron jobs / scheduled tasks](#cron-jobs--scheduled-tasks)
   - [Dependencies](#dependencies)
-  - [What changes are needed to `aqie-back-end`?](#what-changes-are-needed-to-aqie-back-end)
+  - [What changes are needed to the back end?](#what-changes-are-needed-to-the-back-end)
   - [Key design & implementation choices](#key-design--implementation-choices)
   - [Pollutants, timeframes and data shapes](#pollutants-timeframes-and-data-shapes)
   - [Known limitations (this is a prototype, not production)](#known-limitations-this-is-a-prototype-not-production)
@@ -49,9 +49,14 @@ the [GOV.UK Frontend](https://github.com/alphagov/govuk-frontend).
 
 This repo is a **non-production spike** exploring interactive hourly air-quality graphs for each
 monitoring site, for the DEFRA "Get air pollution data" service. It lets a user find a monitoring
-station (by town, postcode or station name), see a **pollutant summary table** (24-hour average, data
-capture %, hourly exceedances) and **interactive hourly charts** (small multiples or a combined
+station (by town, postcode or station name), see a **pollutant summary table** (average, data
+capture %, hourly exceedances) and **interactive charts** (small multiples or a combined
 overlay) across several timeframes.
+
+The summary table and the charts are always derived from the **same series over the same window**, so
+changing the timeframe updates both. Hourly exceedances are only meaningful at hourly resolution, so
+the longer timeframes — which are served as daily averages — say so rather than showing a count that
+cannot be computed.
 
 It was built against two acceptance criteria:
 
@@ -61,10 +66,10 @@ It was built against two acceptance criteria:
    service — see [Feasibility assessment](#feasibility-assessment).
 
 > [!IMPORTANT]
-> Everything in this spike is **self-contained in this repo** — it makes **no changes to
-> `aqie-back-end`**. The proper production home for some of this logic is the back-end; that is
-> documented in [docs/productionisation-notes.md](docs/productionisation-notes.md), together with a migration
-> checklist and the verified feed facts.
+> This spike is **entirely self-contained**. It depends on no Defra service: the station list and the
+> hourly readings come straight from the Ricardo UK-Air API, and geocoding from postcodes.io. Nothing
+> else needs to be running or deployed for it to work. Where this logic would live in production is
+> covered in [docs/productionisation-notes.md](docs/productionisation-notes.md).
 
 ## Architecture & data flow
 
@@ -77,58 +82,60 @@ JSON block embedded in the page.
 ```mermaid
 flowchart LR
   U["User's browser"] -->|HTTP| D["This demo<br/>Express + Nunjucks · :3000"]
-  D -->|"GET /measurements<br/>(station list + features of interest)"| B["aqie-back-end · :3001<br/>(existing, unchanged)"]
-  D -->|"GET GetObservation<br/>(hourly series)"| S["DEFRA Sensor Observation<br/>Service (SOS) feed · public"]
+  D -->|"POST /api/login_check<br/>(bearer token)"| R["Ricardo UK-Air API<br/>api-ukair.defra.gov.uk"]
+  D -->|"GET /api/site_meta_datas<br/>(station list)"| R
+  D -->|"GET /api/pollutant_measurement_datas<br/>(hourly readings)"| R
   D -->|"geocode postcode<br/>or place name"| P["postcodes.io<br/>(public, no auth)"]
-  B -->|"reads"| M[("MongoDB<br/>measurements")]
-  B -.->|"schedulers populate"| X["DEFRA site-process / SOS<br/>+ Ricardo API"]
 ```
 
 ## Data sources
 
-| Source                                            | Provides                                                                                                                         | Auth          | Called by                                                      | Notes                                                                                                                                                        |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **`aqie-back-end` `GET /measurements`** (`:3001`) | Station list (name, `localSiteID`, coordinates) and, per pollutant, the **feature-of-interest (FOI)** id                         | None (local)  | Demo server ([app/lib/aqie-api.js](app/lib/aqie-api.js))       | Read-only; the back-end is **not modified**. Data is populated by the back-end's own cron jobs.                                                              |
-| **DEFRA SOS `GetObservation`** feed               | The **full hourly time series** per pollutant (Sensor Web Enablement (SWE) encoded XML)                                          | None (public) | Demo server ([app/lib/sos-history.js](app/lib/sos-history.js)) | The demo fetches and decodes this **directly**. This is the data the back-end currently fetches then discards (`/measurements` keeps only the latest value). |
-| **postcodes.io**                                  | Latitude/longitude for a postcode or outcode (`/postcodes`, `/outcodes`) and for a town or place name (`/places`, OS Open Names) | None (public) | Demo server ([app/lib/search.js](app/lib/search.js))           | Nearest 5 stations ranked by haversine distance. See [Search](#search) for the resolution order.                                                             |
+| Source                                             | Provides                                                                                                                         | Auth          | Called by                                                      | Notes                                                                                                 |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| **Ricardo `GET /api/site_meta_datas`**             | Station list: `siteId` (`UKA00315`), `localSiteId` (`MY1`), name, region, coordinates, per-pollutant metadata                    | Bearer token  | Demo server ([app/lib/ricardo-api.js](app/lib/ricardo-api.js)) | Called with `with-pollutants=true`. Only `stationStatus: current` sites are kept, cached for 6 hours. |
+| **Ricardo `GET /api/pollutant_measurement_datas`** | Hourly readings per pollutant over a date range                                                                                  | Bearer token  | Demo server ([app/lib/ricardo-api.js](app/lib/ricardo-api.js)) | One call per pollutant, issued in parallel. See the parameter traps below.                            |
+| **postcodes.io**                                   | Latitude/longitude for a postcode or outcode (`/postcodes`, `/outcodes`) and for a town or place name (`/places`, OS Open Names) | None (public) | Demo server ([app/lib/search.js](app/lib/search.js))           | Nearest 5 stations ranked by haversine distance. See [Search](#search) for the resolution order.      |
 
-> [!NOTE]
-> **Why the SOS feed directly?** No existing back-end endpoint returns the hourly series —
-> `/measurements` truncates it to the latest value (`swe:values.split(',').pop()`) and `/aurnData`
-> (PR #157) returns a single Daily Air Quality Index (DAQI) value per station, which cannot drive a
-> per-pollutant hourly graph.
-> The public SOS feed needs **no credentials**, so the demo can stay self-contained. See
-> [docs/productionisation-notes.md](docs/productionisation-notes.md).
+> [!IMPORTANT]
+> **Three traps in the Ricardo API, all of which fail silently.**
+>
+> 1. **Date parameters are `start-date` / `end-date`** (`YYYY-MM-DD`). The `start-date-time` /
+>    `end-date-time` forms used elsewhere in the estate are not in the API's OpenAPI spec, and
+>    **unknown query parameters are ignored without error** — the request then falls back to
+>    `latest-measurement` and returns roughly 33 hours while appearing to succeed.
+> 2. **Results are capped at 10,000 rows**, and `page=2` is always empty, so the cap cannot be
+>    paginated past. Exceeding it truncates the series with no error. Both windows this prototype
+>    serves are far below the cap; a year of SO₂ would not be.
+> 3. **`-9999` means "no reading"**, not a value. Averaging it drags every figure far negative.
+>    [app/lib/ricardo-api.js](app/lib/ricardo-api.js) maps negatives to `null` so they become gaps.
+>
+> The spec is public and authoritative:
+> `curl -H 'Accept: application/vnd.openapi+json' https://uk-air-api.staging.rcdo.co.uk/api/docs.jsonopenapi`
 
 ## Search
 
 A user can search by **town or place name**, **postcode or outcode**, or **monitoring station name**.
 [app/lib/search.js](app/lib/search.js) resolves a query in this order, stopping at the first hit:
 
-| #   | Query looks like            | Lookup                                   | Result                                           |
-| --- | --------------------------- | ---------------------------------------- | ------------------------------------------------ |
-| 1   | Postcode or outcode         | postcodes.io `/postcodes` or `/outcodes` | 5 nearest stations, with distance in km          |
-| 2   | Part of a station name      | Local substring match on `/measurements` | Up to 10 matching stations, no distance shown    |
-| 3   | Anything else (town, place) | postcodes.io `/places` (OS Open Names)   | 5 nearest stations, with distance in km          |
-| 4   | No match                    | —                                        | Empty results, with a prompt to try another term |
+| #   | Query looks like            | Lookup                                    | Result                                           |
+| --- | --------------------------- | ----------------------------------------- | ------------------------------------------------ |
+| 1   | Postcode or outcode         | postcodes.io `/postcodes` or `/outcodes`  | 5 nearest stations, with distance in km          |
+| 2   | Part of a station name      | Local substring match on the station list | Up to 10 matching stations, no distance shown    |
+| 3   | Anything else (town, place) | postcodes.io `/places` (OS Open Names)    | 5 nearest stations, with distance in km          |
+| 4   | No match                    | —                                         | Empty results, with a prompt to try another term |
 
 Station names are matched **before** the place lookup on purpose: "Manchester" and "Marylebone Road"
 both exist in OS Open Names, so geocoding first would hide the station the user most likely meant.
 
-Distances are great-circle (haversine) from the geocoded point to each station's coordinates, which
-`/measurements` stores as `[latitude, longitude]`.
+Distances are great-circle (haversine) from the geocoded point to each station's `latitude` and
+`longitude`, which the station endpoint returns as separate numeric fields.
 
 ## Cron jobs / scheduled tasks
 
 - **This demo has _no_ cron jobs and no database.** It fetches live data on every request.
-- The data it reads from **`aqie-back-end`** _is_ populated by that service's schedulers (which write
-  to the back-end's MongoDB). Relevant ones: pollutant measurements (hourly), monitoring-station cache
-  (every 6h), AURN (Automatic Urban and Rural Network) / DAQI (every 30 min), forecasts. On a **cold
-  back-end start** these run a ~90-second
-  populate before the API binds, and `/measurements` is empty until the first pollutants run completes.
-- **Productionisation:** if the hourly series moves to the back-end (recommended), consider a scheduler
-  and/or a cache there rather than fetching SOS live per request — see
-  [docs/productionisation-notes.md](docs/productionisation-notes.md).
+- The station list is cached in-process for **6 hours** and the bearer token for **50 minutes**;
+  readings are not cached. Both caches are per-instance, so with multiple replicas each warms
+  independently.
 
 ## Dependencies
 
@@ -138,163 +145,134 @@ Runtime (see [package.json](package.json)):
 - **`d3` 7.9.0** — Scalable Vector Graphics (SVG) charts. Prototype Kit 13 does not bundle `application.js`, so D3 is **vendored**
   at [app/assets/javascripts/vendor/d3.min.js](app/assets/javascripts/vendor/d3.min.js) and loaded via a
   `<script>` tag on the station page only.
-- **`fast-xml-parser`** — decodes the SOS XML response.
 - **Node.js ≥ 22** — uses the global `fetch`, `AbortController` and `Intl` timezone formatting; no polyfills.
 
 There is **no database, message queue, or build step** in this repo.
 
-## What changes are needed to `aqie-back-end`?
+## What changes are needed to the back end?
 
-**For this demo: none.** It relies only on the existing, unchanged `GET /measurements` endpoint.
-
-**For production**, the hourly-series fetch + SWE decode in [app/lib/sos-history.js](app/lib/sos-history.js)
-should move into `aqie-back-end` as a new **`GET /measurements/history`** endpoint (it was built and
-verified there during the spike, then reverted to keep this repo self-contained). The demo's
-`getHistory()` would then become a single call to that endpoint. The rationale, the exact endpoint
-contract, verified SOS feed facts, and a step-by-step migration checklist are in
-[docs/productionisation-notes.md](docs/productionisation-notes.md).
+**None.** This prototype talks to the Ricardo UK-Air API directly and depends on no Defra service.
+The station list, the hourly readings and the geocoding are all fetched server-side from public or
+token-authenticated APIs.
 
 ## Key design & implementation choices
 
-| Choice                                                               | Why                                                                                                                       |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **Self-contained demo, no back-end change**                          | Fastest path to a testable spike; the correct home is documented for later                                                |
-| **Hourly series from the public SOS feed**                           | No credentials; reflects the true marginal effort to build the feature                                                    |
-| **Stations sourced from `/measurements`, not `/monitoringStations`** | The two collections share **no ids** (`MY1` vs `UKA00315`); only `/measurements` carries the FOIs the series lookup needs |
-| **Canonical pollutant aliasing** (`GE10`→PM10, `GR25`→PM2.5)         | The back-end stores raw parameter ids; the UI needs canonical pollutants                                                  |
-| **D3 v7 (SVG) charts**                                               | Accessibility (focusable, labelable) and MIT licence vs canvas/commercial libs                                            |
-| **Combined default + small multiples variant**                       | Combined is compact for spotting episodes at a glance; small multiples avoid conflating pollutants with different scales  |
-| **Server-side rendering + progressive enhancement**                  | Core info (tables) works with no JavaScript; charts enhance on top                                                        |
-| **Explicit legal limits (NO₂ 200, SO₂ 350 µg/m³ only)**              | "Hourly exceedances" only applies where an hourly legal limit exists; DAQI bands are a health index, not a legal limit    |
-| **Non-colour-only encoding** (colour + line style + legend)          | Web Content Accessibility Guidelines (WCAG) — do not rely on colour alone                                                 |
-| **Query-param-driven variants** (`?period=`, `?layout=`)             | Every variant is a shareable, bookmarkable link — useful for user research                                                |
+| Choice                                                      | Why                                                                                                                      |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Series and stations direct from the Ricardo API**         | The prototype is self-contained: no Defra service has to be running or changed for it to work                            |
+| **Stations keyed by Ricardo `siteId` (`UKA00315` form)**    | The only identifier `pollutant_measurement_datas` accepts; `localSiteId` (`MY1`) returns a 422                           |
+| **Window anchored on the latest reading, not the clock**    | A station that stopped publishing shows a gap rather than a window of empty hours                                        |
+| **Closed stations filtered out**                            | The upstream list includes sites closed years ago; a "last 24 hours" view of one is always empty                         |
+| **D3 v7 (SVG) charts**                                      | Accessibility (focusable, labelable) and MIT licence vs canvas/commercial libs                                           |
+| **Combined default + small multiples variant**              | Combined is compact for spotting episodes at a glance; small multiples avoid conflating pollutants with different scales |
+| **Server-side rendering + progressive enhancement**         | Core info (tables) works with no JavaScript; charts enhance on top                                                       |
+| **Explicit legal limits (NO₂ 200, SO₂ 350 µg/m³ only)**     | "Hourly exceedances" only applies where an hourly legal limit exists; DAQI bands are a health index, not a legal limit   |
+| **Non-colour-only encoding** (colour + line style + legend) | Web Content Accessibility Guidelines (WCAG) — do not rely on colour alone                                                |
+| **Query-param-driven variants** (`?period=`, `?layout=`)    | Every variant is a shareable, bookmarkable link — useful for user research                                               |
 
 ## Pollutants, timeframes and data shapes
 
-**Pollutant codes.** The back-end stores measurements keyed by the **raw** DEFRA `parameter_id`, which
-includes several variants per pollutant. [app/data/pollutants.js](app/data/pollutants.js) canonicalises
-them before display:
+**Pollutant codes.** Ricardo needs a different code on the way in from the one it sends back, and two
+of the five are rejected under their display names. [app/lib/ricardo-api.js](app/lib/ricardo-api.js)
+maps both directions onto the canonical codes in [app/data/pollutants.js](app/data/pollutants.js):
 
-| Raw codes              | Canonical | Displayed as     |
-| ---------------------- | --------- | ---------------- |
-| `PM25`, `GR25`         | `PM25`    | PM2.5            |
-| `PM10`, `GE10`, `GR10` | `PM10`    | PM10             |
-| `NO2`                  | `NO2`     | Nitrogen dioxide |
-| `O3`                   | `O3`      | Ozone            |
-| `SO2`                  | `SO2`     | Sulphur dioxide  |
+| Canonical | Requested as | Returned as                                             | Displayed as     |
+| --------- | ------------ | ------------------------------------------------------- | ---------------- |
+| `PM25`    | `PM25`       | `PM<sub>2.5</sub> particulate matter (Hourly measured)` | PM2.5            |
+| `PM10`    | **`GE10`**   | `PM<sub>10</sub> particulate matter (Hourly measured)`  | PM10             |
+| `NO2`     | `NO2`        | `Nitrogen dioxide`                                      | Nitrogen dioxide |
+| `O3`      | `O3`         | `Ozone`                                                 | Ozone            |
+| `SO2`     | `SO2`        | `Sulphur dioxide`                                       | Sulphur dioxide  |
 
-Other upstream codes (`NO`, `NOXasNO2`, `AP25`/`AT25`, `AP10`/`AT10`) are not DAQI pollutants and are
-ignored. Pollutants whose `featureOfInterest` is the sentinel `missingFOI` (or empty) are skipped —
-no series can be fetched for them.
+`PM10` and `PM2.5` are **rejected as invalid** if sent under those names — they must be asked for as
+`GE10` and `PM25`. Returned names arrive with HTML subscript markup, which is stripped before use.
 
-**Timeframes.** `?period=` maps to a request window and a resolution:
+**Timeframes.** `?period=` maps to a date range on the readings endpoint:
 
-| `period` | Window     | Resolution                          |
-| -------- | ---------- | ----------------------------------- |
-| `24h`    | now − 24h  | hourly                              |
-| `7d`     | now − 7d   | hourly                              |
-| `month`  | now − 1 mo | daily mean (Europe/London calendar) |
-| `year`   | now − 1 yr | daily mean (Europe/London calendar) |
+| `period` | Sent as                         | Points per pollutant | Resolution |
+| -------- | ------------------------------- | -------------------- | ---------- |
+| `24h`    | `start-date`/`end-date`, 1 day  | 24                   | hourly     |
+| `7d`     | `start-date`/`end-date`, 7 days | 168                  | hourly     |
 
-Hourly over a year is ~8,760 points per pollutant, so long ranges are aggregated to daily means; the
-trade-off is that intra-day peaks are hidden at those ranges.
+The API takes whole dates, so a request returns a little more than asked for; the series is trimmed
+back to an exact window ending at the most recent reading. Some pollutants (SO₂) also return
+15-minute rows alongside the hourly ones and `data-type` does **not** separate them, so rows are
+filtered on their own interval instead.
 
-**Back-end response shapes** (both read-only, unchanged):
-
-```
-GET /measurements       → { measurements: [ { name, localSiteID, location, updated,
-                            pollutants: { <CODE>: { featureOfInterest, time: { date }, value, exception } } } ] }
-GET /monitoringStations → { stations: [ { name, area, localAuthority, localSiteID, areaType,
-                            location: { coordinates: [lat, lng] }, pollutants: [] } ] }
-```
-
-`location.coordinates` is **`[latitude, longitude]`** (latitude first — not GeoJSON order). Distances
-are great-circle (haversine) from the geocoded search point.
-
-**Internal history shape** returned by `getHistory()` — deliberately identical to the proposed
-back-end endpoint, so productionising is a drop-in swap:
+**Internal history shape** returned by `getHistory()`:
 
 ```
-{ siteId, period, resolution: 'hourly' | 'daily', pollutants: { <CODE>: [ { time, value } ] } }
+{ siteId, period, resolution: 'hourly', from, to,
+  pollutants: { <CODE>: [ { time, value } ] } }
 ```
 
-Values of `-9999`, `-99`, `NaN` and negatives are treated as missing and dropped, which is what the
-data-capture percentage measures.
+`value` is `null` where the instrument produced no reading (upstream `-9999`), and that is what the
+data-capture percentage measures. `from`/`to` bound the trimmed window, and both the page label and
+the summary table are derived from them.
 
 ## Known limitations (this is a prototype, not production)
 
-- **No caching or retry** — the SOS feed is hit live on each request and can be slow or return `504`s;
-  a failed pollutant degrades to an empty series rather than failing the page.
-- **Long timeframes are heavy** — the no-JavaScript data tables for the year view render ~365 rows × 5
-  pollutants.
+- **Only two timeframes.** The prototype serves the last 24 hours and the last 7 days, which are the
+  two the design lead identified as critical. Longer ranges are available from the API but are out of
+  scope for this spike — see [docs/productionisation-notes.md](docs/productionisation-notes.md).
+- **AURN stations only** (213 current sites). Non-AURN metadata exists upstream but its coverage is
+  unverified, so areas covered only by local networks will show a distant station instead.
 - **Combined chart uses a shared y-axis**, so low-value pollutants (e.g. SO₂) appear flat next to O₃.
 - **Search results are not distance-capped** — a town far from any monitor still returns its 5
   nearest stations, which may be tens of kilometres away.
 - **Ambiguous place names take the first match** (`/places` is queried with `limit=1`), so there is no
   disambiguation step for, say, the several Newports.
 - **Service-navigation tabs** from the mockups are omitted to avoid dead links.
-- Deferred production concerns (caching, rate-limiting, downsampling, stored history, auth/proxy) are
-  listed in [docs/productionisation-notes.md](docs/productionisation-notes.md).
 
 ## Feasibility assessment
 
 The second acceptance criterion. Short answer: **feasible, with low–moderate back-end effort.**
 
-- **Back-end (low–moderate).** No new data source and no credentials are needed — the public SOS
-  `GetObservation` feed already returns the full hourly series and the back-end already fetches it for
-  `/measurements`, then discards all but the latest value. The change is: decode the whole
-  `swe:values` block instead of the last token, build the temporal range from a requested period,
-  aggregate/downsample long ranges, and add tests. Endpoint contract and file layout are in
-  [docs/productionisation-notes.md](docs/productionisation-notes.md).
+- **Back-end (none needed).** The prototype calls the Ricardo UK-Air API directly, so no Defra
+  service has to be built or changed to run it. A production implementation would more likely put
+  this behind a service of its own, so credentials live in one place, but nothing here depends on
+  that happening first.
 - **Front end (moderate).** Location search, D3 charts, accessible equivalents and the layout variants
   were the bulk of the work in this spike; it was all achievable within the Prototype Kit and reached
   **0 axe-core WCAG 2.2 A/AA violations** across all pages, verified with keyboard-only navigation,
   contrast checks and JavaScript disabled.
-- **Main risks.** SOS origin reliability (`504`s observed during the spike), performance of very long
-  ranges, and timezone handling at aggregation boundaries.
-- **Productionisation adds** caching, rate-limiting/retry, downsampling and possibly stored history —
-  the operational work, rather than the feature itself, is where the remaining effort sits.
+- **Main risks.** Credential management for the Ricardo API, the silent 10,000-row cap on longer
+  ranges, and AURN-only station coverage.
 
 ## Running this prototype locally
 
-1. Start `aqie-back-end` on `:3001` (it provides `/measurements`), following that repo's own README.
-   It is the **standard, unmodified** service — no local changes to it are needed. Allow ~90 seconds
-   for its startup populate before the API binds, then confirm with
-   `curl http://localhost:3001/measurements`.
-2. In this repo: `npm install`, then `npm run dev` and open `http://localhost:3000`.
-3. Configuration: [.env](.env) sets `AQIE_BACK_END_URL=http://localhost:3001` (defaults to that if unset).
-   `SOS_URL` can override the SOS feed base if needed, and `SOS_TIMEOUT_MS` (default `50000`) the
-   budget for a station's whole history fetch.
+1. Copy [.env.template](.env.template) to `.env` and fill in `RICARDO_API_EMAIL` and
+   `RICARDO_API_PASSWORD`. No other service needs to be running.
+2. `npm install`, then `npm run dev` and open `http://localhost:3000`. The home page reports whether
+   the API and the postcode lookup are reachable.
+3. `RICARDO_TIMEOUT_MS` (default `20000`) bounds each call.
+
+> [!WARNING]
+> **Quote the password in `.env` if it contains `#`.** `dotenv` treats an unquoted `#` as the start of
+> a comment and truncates the value there, so `RICARDO_API_PASSWORD=secret#` arrives as `secret` and
+> every call fails with `401 Invalid credentials` — which looks exactly like an expired password.
+> `RICARDO_API_PASSWORD="secret#"` is parsed correctly.
 
 ### Running on CDP
 
 The localhost default is only useful locally. When deployed, two things must be in place or every
 outbound call fails with `fetch failed`:
 
-- **`AQIE_BACK_END_URL` must be set** for the environment (via `cdp-app-config`) to the internal
-  address of `aqie-back-end` — `https://aqie-back-end.<env>.cdp-int.defra.cloud`, the form the
-  deployed `aqie-front-end` uses (`src/config/index.js`). The bare service name `http://aqie-back-end`
-  is the Docker Compose form and is not guaranteed to resolve on CDP. The value is not sensitive, so
-  it belongs in `cdp-app-config` rather than the Secrets page (a secret works too — both arrive as
-  environment variables). Without it the app calls `http://localhost:3001` inside its own container
-  and gets a connection failure on the station search.
+- **`RICARDO_API_EMAIL` and `RICARDO_API_PASSWORD` must be set** for the environment. These are
+  credentials, so they belong on the CDP **Secrets** page rather than in `cdp-app-config`. The three
+  `RICARDO_API_*_URL` values are not sensitive and can go in `cdp-app-config`; they default to
+  production if unset.
 - **`.cdp-int.defra.cloud` hosts are internal.** They cannot be curled from a laptop without the
   Defra VPN — an SSL/connection error from your own machine says nothing about the deployed app.
   Check from inside the container instead. **The CDP Portal terminal is not available for this
-  service**, so the checks are reachable over HTTP rather than a shell: the home page reports the
-  back-end URL, whether a proxy is configured and the status of each data source, and
-  `GET /debug/sos` performs one real SOS request and returns the outcome as JSON — the `CONNECT`
-  status of every proxy in the environment, the exact URL called, time taken, bytes received,
-  points decoded and the first 300 characters of the XML, or the error and the phase it failed in.
-  It takes the station and `featureOfInterest` from the back-end's own `/measurements` records
-  (`?siteId=` only selects among them), so a caller cannot steer the outbound request at another
-  host.
+  service**, so the home page reports the data-source URL, whether a proxy is configured, and the
+  status of each data source.
 - **Outbound internet goes through the CDP squid proxy.** Node's global `fetch` ignores the standard
   `*_PROXY` environment variables, so [app/lib/proxy.js](app/lib/proxy.js) installs an `undici`
-  `EnvHttpProxyAgent` as the global dispatcher when a proxy variable is present. This is what allows
-  the public DEFRA SOS feed to be reached from a deployed container. Internal hosts (`NO_PROXY`,
-  `localhost`, `.cdp-int.defra.cloud` and the host from `AQIE_BACK_END_URL`) bypass the proxy, so the
-  back-end call is made directly.
+  `EnvHttpProxyAgent` as the global dispatcher when a proxy variable is present. Only the platform's
+  own hosts (`NO_PROXY`, `localhost`, `.cdp-int.defra.cloud`) bypass it. **Every data call this
+  prototype makes now leaves the platform**, so squid can block all of them — which is why the tunnel
+  probes below matter more than they used to.
 - **Which proxy variable is used matters.** `HTTPS_PROXY`/`HTTP_PROXY` are `http://localhost:3128`,
   the squid sidecar every CDP container runs, and **that sidecar is what enforces this service's
   `cdp-tenant-config` allow-list**. `CDP_HTTPS_PROXY` is the legacy central proxy
@@ -308,29 +286,23 @@ outbound call fails with `fetch failed`:
   connection to squid itself negotiates HTTP/2 — a `CONNECT` tunnel cannot be opened over an h2
   session, and every egress call fails with `fetch failed (ERR_HTTP2_ERROR)`. Note that a top-level
   `allowH2` does _not_ cover this: `ProxyAgent` builds the proxy-side connector from `proxyTls` alone.
-- **The SOS host must be allowed through squid.** Unlike `aqie-maps-prototype`, which only calls other
-  CDP services, this app fetches `uk-air.defra.gov.uk` server-side. If that host is not on the
-  environment's egress allow-list every series comes back empty; the logged
-  `SOS history failed …` lines confirm it. **A block is not always fast**: squid may deny the
+- **Both data hosts must be allowed through squid.** `api.postcodes.io` **and**
+  `api-ukair.defra.gov.uk` need to be on the environment's egress allow-list in `cdp-tenant-config`.
+  If the postcode host were removed, location search would return no stations; if the Ricardo host
+  were removed, nothing would load at all. **A block is not always fast**: squid may deny the
   `CONNECT` (quick failure) or silently drop it, which is indistinguishable from a slow origin until
   you look at the tunnel. A `CONNECT` is therefore probed directly for every `*_PROXY` variable in
-  the environment — on demand under `Connection details` on the home page, and automatically
-  (detached and throttled) whenever a fetch stalls before any response header, logged as
-  `SOS tunnel check …`. `CONNECT 200` means the tunnel is fine and the origin is genuinely slow,
-  while a `403`/`3xx` block page or `no response within 8000ms` means the host needs allow-listing.
-  The postcode lookup is the cross-check: it uses the same proxy, so if it succeeds while SOS times
-  out, egress works and the problem is specific to `uk-air.defra.gov.uk`. Note that the SOS check
-  targets the **service path**, not the site root — the root is CDN-fronted and can answer happily
-  while the servlet behind it does not.
-- **A slow origin looks different from a blocked one.** The SOS feed gets slower as the range grows
-  (a year is ~8,760 hourly records per pollutant) and on CDP every byte also crosses squid, so a
-  request can simply run out of time. The `SOS history failed …` line reports the elapsed time and
-  the phase it stalled in for exactly this reason: `no response headers` after the full budget is a
-  tunnel or an origin that never answered, whereas `headers after Xms, body unfinished` is too much
-  XML to move in time — the one case where raising the budget or shortening the range helps.
-  A timeout is retried once if enough budget remains, and reads `SOS did not respond within …`
-  rather than a bare `AbortError`. The budget is deliberately under CDP's 60s load-balancer timeout,
-  past which the page is abandoned regardless — raising `SOS_TIMEOUT_MS` above that will not help.
+  the environment, shown under `Connection details` on the home page. `CONNECT 200` means the tunnel
+  is fine; a `403`/`3xx` block page or `no response within 8000ms` means the host needs
+  allow-listing.
+
+> [!NOTE]
+> Two failures during this spike were both **silent successes** rather than errors, and cost far more
+> time than a hard failure would have: a password truncated at a `#` by `dotenv`, which reads as an
+> expired credential; and date parameters under the wrong names, which the API ignores while still
+> returning `200` and plausible-looking data. The lesson that survives in the code is to check the
+> _shape_ of what came back — the row count, the span, the sign of the values — rather than trusting
+> a status code.
 
 ---
 

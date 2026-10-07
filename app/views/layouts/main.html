@@ -10,19 +10,19 @@ https://prototype-kit.service.gov.uk/docs/how-to-use-layouts
 {% set activeNav = activeNav | default("search") %}
 
 {% block header %}
-  {{ super() }}
-  {{ govukServiceNavigation({
-    navigation: [
-      { href: "/", text: "Search by location", active: activeNav == "search" },
-      { href: "/search-on-a-map", text: "Search on a map", active: activeNav == "map" },
-      { href: "/create-and-download-datasets", text: "Create and download datasets", active: activeNav == "datasets" }
-    ]
-  }) }}
+{{ super() }}
+{{ govukServiceNavigation({
+navigation: [
+{ href: "/", text: "Search by location", active: activeNav == "search" },
+{ href: "/search-on-a-map", text: "Search on a map", active: activeNav == "map" },
+{ href: "/create-and-download-datasets", text: "Create and download datasets", active: activeNav == "datasets" }
+]
+}) }}
 {% endblock %}
 
 {% block beforeContent %}
-  {{ govukPhaseBanner({
-    tag: { text: "Beta" },
-    html: 'This is a prototype using live monitoring data. It is not an official government service.'
-  }) }}
+{{ govukPhaseBanner({
+tag: { text: "Prototype" },
+html: 'This is a prototype using live monitoring data. It is not an official government service.'
+}) }}
 {% endblock %}
